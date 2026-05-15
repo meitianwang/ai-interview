@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Tray } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import type { SidecarEvent } from "@ai-interview/shared";
 import { homedir } from "node:os";
@@ -17,12 +17,14 @@ import { OpenAIClient } from "./llm/OpenAIClient";
 import { PromptBuilder } from "./prompt/PromptBuilder";
 import { SecretStore, type Settings } from "./secrets/SecretStore";
 import { StealthCoordinator } from "./stealth/StealthCoordinator";
+import { StatusStateMachine, type StatusLevel } from "./status/StatusStateMachine";
 import { TriggerLogic } from "./trigger/TriggerLogic";
 import { Triggerer } from "./trigger/Triggerer";
 import { EnergyVADProcessor } from "./vad/VADProcessor";
 
 let floatingWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
 const settingsEntry = "src/renderer/settings/index.html";
@@ -32,6 +34,7 @@ const contextManager = new ContextManager({ transcriptStore });
 const promptBuilder = new PromptBuilder();
 const classifier = new QuestionClassifier();
 const stealth = new StealthCoordinator();
+const appStatus = new StatusStateMachine();
 const defaultSettings: Settings = {
   resume: "",
   jd: "",
@@ -197,6 +200,95 @@ function assertSettingsSender(event: IpcMainInvokeEvent) {
   }
 }
 
+function reportStatus(event: string) {
+  appStatus.report(event);
+  refreshTray();
+}
+
+function clearStatus(event: string) {
+  appStatus.clear(event);
+  refreshTray();
+}
+
+function createTray() {
+  if (tray) {
+    return;
+  }
+
+  tray = new Tray(makeTrayIcon(appStatus.level()));
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "打开设置", click: openSettings },
+      { type: "separator" },
+      { label: "退出", click: () => app.quit() },
+    ]),
+  );
+  tray.on("click", openSettings);
+  refreshTray();
+}
+
+function refreshTray() {
+  if (!tray) {
+    return;
+  }
+
+  const level = appStatus.level();
+  tray.setImage(makeTrayIcon(level));
+  tray.setToolTip(`AI Interview · ${statusLabel(level)}`);
+}
+
+function makeTrayIcon(level: StatusLevel) {
+  const [red, green, blue] = statusColor(level);
+  const size = 16;
+  const radius = 5.5;
+  const bitmap = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dx = x + 0.5 - size / 2;
+      const dy = y + 0.5 - size / 2;
+      if (Math.sqrt(dx * dx + dy * dy) > radius) {
+        continue;
+      }
+
+      const offset = (y * size + x) * 4;
+      bitmap[offset] = blue;
+      bitmap[offset + 1] = green;
+      bitmap[offset + 2] = red;
+      bitmap[offset + 3] = 255;
+    }
+  }
+
+  const image = nativeImage.createFromBitmap(bitmap, { width: size, height: size });
+  image.setTemplateImage(false);
+  return image;
+}
+
+function statusColor(level: StatusLevel): [number, number, number] {
+  switch (level) {
+    case "green":
+      return [109, 191, 109];
+    case "yellow":
+      return [230, 200, 74];
+    case "orange":
+      return [232, 146, 60];
+    case "red":
+      return [224, 70, 60];
+  }
+}
+
+function statusLabel(level: StatusLevel): string {
+  switch (level) {
+    case "green":
+      return "正常";
+    case "yellow":
+      return "降级";
+    case "orange":
+      return "异常";
+    case "red":
+      return "需要处理";
+  }
+}
+
 function registerFocusedWindowShortcut(window: BrowserWindow) {
   window.webContents.on("before-input-event", (event, input) => {
     const isModifierShortcut = input.type === "keyDown" && input.shift && (input.control || input.meta);
@@ -221,6 +313,7 @@ function connectSidecar() {
   const client = new IpcClient(socketPath);
 
   client.on("connect", () => {
+    clearStatus("ipc.disconnected");
     client.send({
       v: 1,
       t: "capture.start",
@@ -261,9 +354,11 @@ function connectSidecar() {
     sendToFloating("sidecar-event", event);
   });
   client.on("error", (error) => {
+    reportStatus("ipc.disconnected");
     console.error("[sidecar]", error);
   });
   client.on("disconnect", () => {
+    reportStatus("ipc.disconnected");
     sidecar = null;
     setTimeout(connectSidecar, 1000);
   });
@@ -272,8 +367,16 @@ function connectSidecar() {
   client.connect();
 }
 
-void asr.connect();
+asr.connect().catch((error) => {
+  reportStatus("asr.failed");
+  console.error("[asr]", error);
+});
+asr.on("error", (error) => {
+  reportStatus("asr.failed");
+  console.error("[asr]", error);
+});
 asr.on("transcript", (event) => {
+  clearStatus("asr.failed");
   if (event.type === "partial") {
     transcriptStore.applyPartial(event.text, event.ts);
   } else {
@@ -282,9 +385,18 @@ asr.on("transcript", (event) => {
   triggerLogic.updateTranscriptTail(transcriptStore.tail(40));
   sendToFloating("transcript", transcriptStore.snapshot());
 });
-triggerer.on("start", () => sendToFloating("answer-start", null));
+llmRouter.on("fallback", () => reportStatus("llm.fallback"));
+llmRouter.on("client-error", () => reportStatus("llm.failed"));
+triggerer.on("start", () => {
+  clearStatus("llm.fallback");
+  clearStatus("llm.failed");
+  sendToFloating("answer-start", null);
+});
 triggerer.on("token", (text) => sendToFloating("answer-token", text));
-triggerer.on("done", () => sendToFloating("answer-done", null));
+triggerer.on("done", () => {
+  clearStatus("llm.failed");
+  sendToFloating("answer-done", null);
+});
 ipcMain.handle("settings:load", async (event) => {
   assertSettingsSender(event);
   settingsCache = await getSecretStore().loadAll();
@@ -305,6 +417,7 @@ app.whenReady().then(() => {
     app.dock?.hide();
   }
   void loadStoredSettings();
+  createTray();
 
   const window = new BrowserWindow({
     width: 480,
@@ -358,6 +471,8 @@ app.on("will-quit", () => {
     triggerTickTimer = null;
   }
   triggerer.abort();
+  tray?.destroy();
+  tray = null;
 });
 
 function createLLMClients(settings: Pick<Settings, "anthropicKey" | "openaiKey">): {
