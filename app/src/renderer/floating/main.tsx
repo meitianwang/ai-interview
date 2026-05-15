@@ -43,7 +43,10 @@ function App() {
 
   return (
     <div>
-      <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 8 }}>面试助手 · 浮窗</div>
+      <div style={dragHeaderStyle}>
+        <span>面试助手 · 浮窗</span>
+        <span style={{ color: "#4b5563", letterSpacing: 1 }}>·····</span>
+      </div>
       <div
         style={{
           background: "#333",
@@ -122,6 +125,17 @@ const answerMarkdownStyle: React.CSSProperties = {
   maxHeight: 92,
   overflowY: "auto",
 };
+
+const dragHeaderStyle = {
+  WebkitAppRegion: "drag",
+  alignItems: "center",
+  color: "#9ca3af",
+  display: "flex",
+  fontSize: 12,
+  justifyContent: "space-between",
+  marginBottom: 8,
+  minHeight: 22,
+} as React.CSSProperties & { WebkitAppRegion: string };
 
 const markdownComponents = {
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => <p style={{ margin: "0 0 6px" }} {...props} />,

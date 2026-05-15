@@ -205,6 +205,8 @@ app.whenReady().then(() => {
     },
   });
   floatingWindow = window;
+  window.setAlwaysOnTop(true, "screen-saver");
+  window.setVisibleOnAllWorkspaces(true);
 
   stealth.protect(window);
   loadFloatingWindow(window);
