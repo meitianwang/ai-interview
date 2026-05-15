@@ -19,6 +19,7 @@ private let captureBridge = CaptureBridge(server: server)
 private let shareDetector = ScreenShareDetector()
 private let hotkey = HotkeyService()
 private let eventSequencer = EventSequencer()
+private var autoOCR: AutoOCRMode?
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
@@ -26,6 +27,7 @@ let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .ma
 let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 let shutdown = {
     hotkey.unregisterAll()
+    autoOCR?.stop()
     shareDetector.stop()
     captureBridge.stop()
     server.stop()
@@ -104,6 +106,21 @@ do {
     logLine("sidecar hotkey registered: screenshot")
 } catch {
     logLine("sidecar hotkey register failed: \(error)")
+}
+if ProcessInfo.processInfo.environment["SIDECAR_AUTO_OCR"] == "1", #available(macOS 13.0, *) {
+    let auto = AutoOCRMode()
+    auto.onText = { text in
+        server.emit(.ocrResult(
+            seq: eventSequencer.next(),
+            ts: Int64(Date().timeIntervalSince1970 * 1000),
+            text: text,
+            boxes: nil
+        ))
+        logLine("sidecar: auto ocr \(text.count) chars")
+    }
+    auto.start()
+    autoOCR = auto
+    logLine("sidecar auto OCR enabled")
 }
 RunLoop.main.run()
 
