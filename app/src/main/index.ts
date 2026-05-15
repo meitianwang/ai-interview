@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AudioBuffer } from "./audio/AudioBuffer";
 import { createASRClient } from "./asr/ASRFactory";
 import { TranscriptStore } from "./asr/TranscriptStore";
+import { QuestionClassifier } from "./classifier/QuestionClassifier";
 import { ContextManager } from "./context/ContextManager";
 import { IpcClient } from "./ipc/IpcClient";
 import { ClaudeClient } from "./llm/ClaudeClient";
@@ -21,6 +22,7 @@ const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
 const contextManager = new ContextManager({ transcriptStore });
 const promptBuilder = new PromptBuilder();
+const classifier = new QuestionClassifier();
 const asr =
   process.env.ASR_PROVIDER === "huoshan"
     ? createASRClient({
@@ -67,8 +69,10 @@ function fireAnswer() {
   }
 
   answerInFlight = true;
+  const context = contextManager.buildContext();
+  const questionType = classifier.classify({ transcript: context.transcript, ocr: context.ocr });
   triggerer
-    .fire("general")
+    .fire(questionType)
     .catch((error) => console.error("[trigger]", error))
     .finally(() => {
       answerInFlight = false;
