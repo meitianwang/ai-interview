@@ -7,18 +7,29 @@ declare global {
       onSidecarEvent: (callback: (event: unknown) => void) => () => void;
       onAudioLevel: (callback: (level: number) => void) => () => void;
       onTranscript: (callback: (transcript: string) => void) => () => void;
+      onAnswerStart: (callback: () => void) => () => void;
+      onAnswerToken: (callback: (token: string) => void) => () => void;
+      onAnswerDone: (callback: () => void) => () => void;
     };
   }
 }
 
 function App() {
-  const [lastEvent, setLastEvent] = useState<unknown>(null);
+  const [sidecarStatus, setSidecarStatus] = useState("等待 sidecar 事件...");
   const [level, setLevel] = useState(0);
   const [transcript, setTranscript] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [generating, setGenerating] = useState(false);
 
-  useEffect(() => window.api?.onSidecarEvent(setLastEvent), []);
+  useEffect(() => window.api?.onSidecarEvent((event) => setSidecarStatus(formatEventStatus(event))), []);
   useEffect(() => window.api?.onAudioLevel(setLevel), []);
   useEffect(() => window.api?.onTranscript(setTranscript), []);
+  useEffect(() => window.api?.onAnswerStart(() => {
+    setAnswer("");
+    setGenerating(true);
+  }), []);
+  useEffect(() => window.api?.onAnswerToken((token) => setAnswer((current) => current + token)), []);
+  useEffect(() => window.api?.onAnswerDone(() => setGenerating(false)), []);
 
   return (
     <div>
@@ -44,39 +55,34 @@ function App() {
       <div style={{ color: "#d1d5db", fontSize: 13, marginBottom: 8, whiteSpace: "pre-wrap" }}>
         {transcript || <span style={{ color: "#6b7280" }}>聆听中...</span>}
       </div>
-      {lastEvent ? (
-        <pre style={{ color: "#6dbf6d", fontSize: 11, margin: 0, whiteSpace: "pre-wrap" }}>
-          {JSON.stringify(formatEvent(lastEvent), null, 2)}
-        </pre>
-      ) : (
-        <div style={{ color: "#9ca3af" }}>等待 sidecar 事件...</div>
-      )}
+      <div style={{ color: "#6dbf6d", fontSize: 11, marginBottom: 6 }}>
+        建议答案{generating ? " · 生成中" : ""}
+      </div>
+      <div style={{ color: "#fff", fontSize: 13, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+        {answer || <span style={{ color: "#6b7280" }}>按 Ctrl/Cmd+Shift+Space 触发</span>}
+      </div>
+      <div style={{ color: "#6b7280", fontSize: 11 }}>{sidecarStatus}</div>
     </div>
   );
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
 
-function formatEvent(event: unknown) {
-  if (
+function formatEventStatus(event: unknown): string {
+  if (!isSidecarEvent(event)) {
+    return "sidecar 事件已接收";
+  }
+
+  return `sidecar ${event.t} #${event.seq}`;
+}
+
+function isSidecarEvent(event: unknown): event is { t: string; seq: number } {
+  return (
     typeof event === "object" &&
     event !== null &&
     "t" in event &&
-    event.t === "audio.chunk" &&
-    "p" in event &&
-    typeof event.p === "object" &&
-    event.p !== null &&
-    "pcm_b64" in event.p &&
-    typeof event.p.pcm_b64 === "string"
-  ) {
-    return {
-      ...event,
-      p: {
-        ...event.p,
-        pcm_b64: `<${event.p.pcm_b64.length} chars>`,
-      },
-    };
-  }
-
-  return event;
+    typeof event.t === "string" &&
+    "seq" in event &&
+    typeof event.seq === "number"
+  );
 }

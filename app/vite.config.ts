@@ -8,6 +8,13 @@ export default defineConfig({
     electron({
       main: {
         entry: "src/main/index.ts",
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ["keytar", "ws"],
+            },
+          },
+        },
       },
       preload: {
         input: {

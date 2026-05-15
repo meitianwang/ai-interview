@@ -16,4 +16,19 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("transcript", handler);
     return () => ipcRenderer.off("transcript", handler);
   },
+  onAnswerStart: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("answer-start", handler);
+    return () => ipcRenderer.off("answer-start", handler);
+  },
+  onAnswerToken: (callback: (token: string) => void) => {
+    const handler = (_: unknown, token: string) => callback(token);
+    ipcRenderer.on("answer-token", handler);
+    return () => ipcRenderer.off("answer-token", handler);
+  },
+  onAnswerDone: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on("answer-done", handler);
+    return () => ipcRenderer.off("answer-done", handler);
+  },
 });

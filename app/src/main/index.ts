@@ -1,16 +1,26 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, globalShortcut } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AudioBuffer } from "./audio/AudioBuffer";
 import { createASRClient } from "./asr/ASRFactory";
 import { TranscriptStore } from "./asr/TranscriptStore";
+import { ContextManager } from "./context/ContextManager";
 import { IpcClient } from "./ipc/IpcClient";
+import { ClaudeClient } from "./llm/ClaudeClient";
+import type { LLMClient } from "./llm/LLMClient";
+import { LLMRouter } from "./llm/LLMRouter";
+import { MockLLMClient } from "./llm/MockLLMClient";
+import { OpenAIClient } from "./llm/OpenAIClient";
+import { PromptBuilder } from "./prompt/PromptBuilder";
+import { Triggerer } from "./trigger/Triggerer";
 
 let floatingWindow: BrowserWindow | null = null;
 let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
 const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
+const contextManager = new ContextManager({ transcriptStore });
+const promptBuilder = new PromptBuilder();
 const asr =
   process.env.ASR_PROVIDER === "huoshan"
     ? createASRClient({
@@ -29,6 +39,9 @@ const asr =
           { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
         ],
       });
+const llmRouter = new LLMRouter(createLLMClients(), { timeoutMs: 8000 });
+const triggerer = new Triggerer(contextManager, promptBuilder, llmRouter);
+let answerInFlight = false;
 
 function loadFloatingWindow(window: BrowserWindow) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -46,6 +59,37 @@ function sendToFloating(channel: string, payload: unknown) {
   }
 
   floatingWindow.webContents.send(channel, payload);
+}
+
+function fireAnswer() {
+  if (answerInFlight) {
+    return;
+  }
+
+  answerInFlight = true;
+  triggerer
+    .fire("general")
+    .catch((error) => console.error("[trigger]", error))
+    .finally(() => {
+      answerInFlight = false;
+    });
+}
+
+function registerFocusedWindowShortcut(window: BrowserWindow) {
+  window.webContents.on("before-input-event", (event, input) => {
+    const isShortcut =
+      input.type === "keyDown" &&
+      input.shift &&
+      (input.control || input.meta) &&
+      (input.code === "Space" || input.key === " ");
+
+    if (!isShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    fireAnswer();
+  });
 }
 
 function connectSidecar() {
@@ -102,8 +146,15 @@ asr.on("transcript", (event) => {
   }
   sendToFloating("transcript", transcriptStore.snapshot());
 });
+triggerer.on("start", () => sendToFloating("answer-start", null));
+triggerer.on("token", (text) => sendToFloating("answer-token", text));
+triggerer.on("done", () => sendToFloating("answer-done", null));
 
 app.whenReady().then(() => {
+  if (process.platform === "darwin") {
+    app.dock?.hide();
+  }
+
   floatingWindow = new BrowserWindow({
     width: 480,
     height: 220,
@@ -118,10 +169,14 @@ app.whenReady().then(() => {
   });
 
   loadFloatingWindow(floatingWindow);
+  registerFocusedWindowShortcut(floatingWindow);
   floatingWindow.on("closed", () => {
     floatingWindow = null;
   });
   setTimeout(connectSidecar, 200);
+  if (!globalShortcut.register("CommandOrControl+Shift+Space", fireAnswer)) {
+    console.warn("[trigger] CommandOrControl+Shift+Space registration failed");
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -130,3 +185,30 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+  triggerer.abort();
+});
+
+function createLLMClients(): { primary: LLMClient; fallback: LLMClient } {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!anthropicKey || !openaiKey) {
+    return {
+      primary: new MockLLMClient(),
+      fallback: new MockLLMClient("备用答案：请先补充 API key。"),
+    };
+  }
+
+  return {
+    primary: new ClaudeClient({
+      apiKey: anthropicKey,
+      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+    }),
+    fallback: new OpenAIClient({
+      apiKey: openaiKey,
+      model: process.env.OPENAI_MODEL ?? "gpt-5.4",
+    }),
+  };
+}
