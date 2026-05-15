@@ -1,0 +1,3 @@
+{"delayMs":0,"message":{"v":1,"t":"ready","seq":0,"ts":0,"p":{"version":"test"}}}
+{"delayMs":500,"message":{"v":1,"t":"audio.chunk","seq":1,"ts":500,"p":{"pcm_b64":"","sample_rate":16000,"channels":1}}}
+{"delayMs":1000,"message":{"v":1,"t":"ocr.result","seq":2,"ts":1500,"p":{"text":"实现一个反转链表的函数。"}}}
