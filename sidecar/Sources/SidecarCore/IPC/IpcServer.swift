@@ -53,8 +53,14 @@ public final class IpcServer {
             return
         }
 
-        clients.forEach { connection in
-            connection.send(content: data, completion: .contentProcessed { _ in })
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.clients.forEach { connection in
+                connection.send(content: data, completion: .contentProcessed { _ in })
+            }
         }
     }
 

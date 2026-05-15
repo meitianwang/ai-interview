@@ -14,6 +14,7 @@ try? FileManager.default.createDirectory(
 )
 
 let server = IpcServer(socketPath: path)
+private let captureBridge = CaptureBridge(server: server)
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
@@ -30,6 +31,12 @@ terminateSource.resume()
 
 server.onCommand = { (command: ElectronCommand) in
     switch command {
+    case .captureStart:
+        captureBridge.start()
+        logLine("sidecar capture started")
+    case .captureStop:
+        captureBridge.stop()
+        logLine("sidecar capture stopped")
     case .ping(let seq, _, let token):
         logLine("sidecar got ping seq=\(seq) token=\(token)")
     default:
@@ -40,3 +47,37 @@ server.onCommand = { (command: ElectronCommand) in
 try server.start()
 logLine("sidecar listening on \(path)")
 RunLoop.main.run()
+
+private final class CaptureBridge {
+    private let server: IpcServer
+    private let captureService: AudioCaptureService
+    private let queue = DispatchQueue(label: "ai-interview.capture-bridge")
+    private var sequence = 0
+
+    init(server: IpcServer) {
+        self.server = server
+        self.captureService = MockAudioCaptureService(chunkIntervalMs: 100)
+        self.captureService.onChunk = { [weak self] pcm, ts in
+            self?.emitAudioChunk(pcm: pcm, ts: ts)
+        }
+    }
+
+    func start() {
+        queue.async { [captureService] in
+            try? captureService.start()
+        }
+    }
+
+    func stop() {
+        queue.async { [captureService] in
+            captureService.stop()
+        }
+    }
+
+    private func emitAudioChunk(pcm: Data, ts: Int64) {
+        queue.async { [server] in
+            self.sequence += 1
+            server.emit(.audioChunk(seq: self.sequence, ts: ts, pcmBase64: pcm.base64EncodedString()))
+        }
+    }
+}
