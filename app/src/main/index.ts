@@ -15,7 +15,9 @@ import { MockLLMClient } from "./llm/MockLLMClient";
 import { OpenAIClient } from "./llm/OpenAIClient";
 import { PromptBuilder } from "./prompt/PromptBuilder";
 import { StealthCoordinator } from "./stealth/StealthCoordinator";
+import { TriggerLogic } from "./trigger/TriggerLogic";
 import { Triggerer } from "./trigger/Triggerer";
+import { EnergyVADProcessor } from "./vad/VADProcessor";
 
 let floatingWindow: BrowserWindow | null = null;
 let sidecar: IpcClient | null = null;
@@ -46,7 +48,10 @@ const asr =
       });
 const llmRouter = new LLMRouter(createLLMClients(), { timeoutMs: 8000 });
 const triggerer = new Triggerer(contextManager, promptBuilder, llmRouter);
+const vad = new EnergyVADProcessor({ threshold: 0.02 });
+const triggerLogic = new TriggerLogic({ silenceMs: 1500, onTrigger: fireAnswer });
 let answerInFlight = false;
+let triggerTickTimer: NodeJS.Timeout | null = null;
 
 function loadFloatingWindow(window: BrowserWindow) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -127,6 +132,7 @@ function connectSidecar() {
       const pcm = Buffer.from(event.p.pcm_b64, "base64");
       audioBuffer.push(pcm);
       asr.pushAudio(pcm);
+      triggerLogic.onVAD(vad.processBuffer(pcm), Date.now());
       sendToFloating("audio-level", audioBuffer.rmsLevel());
     }
 
@@ -156,6 +162,7 @@ asr.on("transcript", (event) => {
   } else {
     transcriptStore.applyFinal(event.text, event.ts);
   }
+  triggerLogic.updateTranscriptTail(transcriptStore.tail(40));
   sendToFloating("transcript", transcriptStore.snapshot());
 });
 triggerer.on("start", () => sendToFloating("answer-start", null));
@@ -192,6 +199,7 @@ app.whenReady().then(() => {
     }
   });
   setTimeout(connectSidecar, 200);
+  triggerTickTimer = setInterval(() => triggerLogic.tick(Date.now()), 200);
   if (!globalShortcut.register("CommandOrControl+Shift+Space", fireAnswer)) {
     console.warn("[trigger] CommandOrControl+Shift+Space registration failed");
   }
@@ -206,6 +214,10 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  if (triggerTickTimer) {
+    clearInterval(triggerTickTimer);
+    triggerTickTimer = null;
+  }
   triggerer.abort();
 });
 
