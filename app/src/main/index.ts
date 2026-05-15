@@ -158,6 +158,7 @@ triggerer.on("done", () => sendToFloating("answer-done", null));
 
 app.whenReady().then(() => {
   if (process.platform === "darwin") {
+    app.setActivationPolicy("accessory");
     app.dock?.hide();
   }
 

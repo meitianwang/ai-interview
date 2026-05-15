@@ -1,7 +1,15 @@
-appId: com.aiinterview.app
+appId: com.airesearch.ai-interview
 productName: AI Interview
-files:
-  - dist/**
-  - package.json
 mac:
   category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  extendInfo:
+    LSUIElement: true
+    NSScreenCaptureUsageDescription: 用于捕获面试软件的系统音频以提供实时辅助
+    NSMicrophoneUsageDescription: 备用麦克风采集
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  - "!**/*.map"
