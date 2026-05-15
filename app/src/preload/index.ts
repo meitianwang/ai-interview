@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("transcript", handler);
     return () => ipcRenderer.off("transcript", handler);
   },
+  onShareState: (callback: (active: boolean) => void) => {
+    const handler = (_: unknown, active: boolean) => callback(active);
+    ipcRenderer.on("share-state", handler);
+    return () => ipcRenderer.off("share-state", handler);
+  },
   onAnswerStart: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on("answer-start", handler);

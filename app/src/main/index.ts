@@ -1,4 +1,5 @@
 import { app, BrowserWindow, globalShortcut } from "electron";
+import type { SidecarEvent } from "@ai-interview/shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AudioBuffer } from "./audio/AudioBuffer";
@@ -121,12 +122,17 @@ function connectSidecar() {
       });
     }, 3000);
   });
-  client.on("event", (event) => {
+  client.on("event", (event: SidecarEvent) => {
     if (event.t === "audio.chunk") {
       const pcm = Buffer.from(event.p.pcm_b64, "base64");
       audioBuffer.push(pcm);
       asr.pushAudio(pcm);
       sendToFloating("audio-level", audioBuffer.rmsLevel());
+    }
+
+    if (event.t === "screen-share.changed") {
+      stealth.protectAll();
+      sendToFloating("share-state", event.p.active);
     }
 
     sendToFloating("sidecar-event", event);

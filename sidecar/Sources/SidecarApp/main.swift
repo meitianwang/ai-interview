@@ -15,12 +15,16 @@ try? FileManager.default.createDirectory(
 
 let server = IpcServer(socketPath: path)
 private let captureBridge = CaptureBridge(server: server)
+private let shareDetector = ScreenShareDetector()
+private var screenShareSequence = 0
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
 let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 let shutdown = {
+    shareDetector.stop()
+    captureBridge.stop()
     server.stop()
     exit(0)
 }
@@ -44,8 +48,19 @@ server.onCommand = { (command: ElectronCommand) in
     }
 }
 
+shareDetector.onChange = { active in
+    screenShareSequence += 1
+    server.emit(.screenShareChanged(
+        seq: screenShareSequence,
+        ts: Int64(Date().timeIntervalSince1970 * 1000),
+        active: active
+    ))
+    logLine("sidecar: screen share \(active ? "STARTED" : "STOPPED")")
+}
+
 try server.start()
 logLine("sidecar listening on \(path)")
+shareDetector.start()
 RunLoop.main.run()
 
 private final class CaptureBridge {

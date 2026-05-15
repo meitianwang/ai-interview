@@ -43,6 +43,10 @@ final class IpcServerTests: XCTestCase {
         var buffer = [UInt8](repeating: 0, count: 4096)
         let count = recv(descriptor, &buffer, buffer.count, 0)
         XCTAssertGreaterThan(count, 0)
+        guard count > 0 else {
+            XCTFail("recv failed with count \(count), errno \(errno)")
+            return ""
+        }
 
         return String(bytes: buffer.prefix(Int(count)), encoding: .utf8) ?? ""
     }

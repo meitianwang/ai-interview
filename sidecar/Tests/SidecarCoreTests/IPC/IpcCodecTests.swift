@@ -11,6 +11,15 @@ final class IpcCodecTests: XCTestCase {
         XCTAssertTrue(string.contains("\"t\":\"ready\""))
     }
 
+    func testEncodeScreenShareChangedEvent() throws {
+        let event = SidecarEvent.screenShareChanged(seq: 2, ts: 300, active: true)
+        let data = try IpcCodec.encode(event)
+        let string = String(data: data, encoding: .utf8)!
+
+        XCTAssertTrue(string.contains("\"t\":\"screen-share.changed\""))
+        XCTAssertTrue(string.contains("\"active\":true"))
+    }
+
     func testDecodePing() throws {
         let line = #"{"v":1,"t":"ping","seq":7,"ts":200,"p":{"token":"abc"}}"#
 

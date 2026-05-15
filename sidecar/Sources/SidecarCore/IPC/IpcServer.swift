@@ -6,6 +6,7 @@ public final class IpcServer {
 
     private let socketPath: String
     private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<Void>()
     private var listener: NWListener?
     private var clients: [NWConnection] = []
     private var buffers: [ObjectIdentifier: String] = [:]
@@ -17,6 +18,7 @@ public final class IpcServer {
     public init(socketPath: String, queue: DispatchQueue = DispatchQueue(label: "ai-interview.ipc-server")) {
         self.socketPath = socketPath
         self.queue = queue
+        self.queue.setSpecific(key: queueKey, value: ())
     }
 
     public func start() throws {
@@ -40,12 +42,20 @@ public final class IpcServer {
     }
 
     public func stop() {
-        listener?.cancel()
-        listener = nil
-        clients.forEach { $0.cancel() }
-        clients.removeAll()
-        buffers.removeAll()
-        try? FileManager.default.removeItem(atPath: socketPath)
+        let cleanup = {
+            self.listener?.cancel()
+            self.listener = nil
+            self.clients.forEach { $0.cancel() }
+            self.clients.removeAll()
+            self.buffers.removeAll()
+            try? FileManager.default.removeItem(atPath: self.socketPath)
+        }
+
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            cleanup()
+        } else {
+            queue.sync(execute: cleanup)
+        }
     }
 
     public func emit(_ event: SidecarEvent) {

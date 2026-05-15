@@ -7,6 +7,7 @@ declare global {
       onSidecarEvent: (callback: (event: unknown) => void) => () => void;
       onAudioLevel: (callback: (level: number) => void) => () => void;
       onTranscript: (callback: (transcript: string) => void) => () => void;
+      onShareState: (callback: (active: boolean) => void) => () => void;
       onAnswerStart: (callback: () => void) => () => void;
       onAnswerToken: (callback: (token: string) => void) => () => void;
       onAnswerDone: (callback: () => void) => () => void;
@@ -20,10 +21,12 @@ function App() {
   const [transcript, setTranscript] = useState("");
   const [answer, setAnswer] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [shareActive, setShareActive] = useState(false);
 
   useEffect(() => window.api?.onSidecarEvent((event) => setSidecarStatus(formatEventStatus(event))), []);
   useEffect(() => window.api?.onAudioLevel(setLevel), []);
   useEffect(() => window.api?.onTranscript(setTranscript), []);
+  useEffect(() => window.api?.onShareState(setShareActive), []);
   useEffect(() => window.api?.onAnswerStart(() => {
     setAnswer("");
     setGenerating(true);
@@ -61,7 +64,9 @@ function App() {
       <div style={{ color: "#fff", fontSize: 13, marginBottom: 8, whiteSpace: "pre-wrap" }}>
         {answer || <span style={{ color: "#6b7280" }}>按 Ctrl/Cmd+Shift+Space 触发</span>}
       </div>
-      <div style={{ color: "#6b7280", fontSize: 11 }}>{sidecarStatus}</div>
+      <div style={{ color: shareActive ? "#fbbf24" : "#6b7280", fontSize: 11 }}>
+        {shareActive ? "屏幕共享检测中" : sidecarStatus}
+      </div>
     </div>
   );
 }
