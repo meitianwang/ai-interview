@@ -1,6 +1,8 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, Tray } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import type { SidecarEvent } from "@ai-interview/shared";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AutoReconnectASR } from "./asr/AutoReconnectASR";
@@ -28,7 +30,10 @@ let floatingWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidecar: IpcClient | null = null;
+let sidecarProc: ChildProcess | null = null;
+let sidecarRestartTimer: NodeJS.Timeout | null = null;
 let logger: Logger | null = null;
+let isQuitting = false;
 const floatingEntry = "src/renderer/floating/index.html";
 const settingsEntry = "src/renderer/settings/index.html";
 const audioBuffer = new AudioBuffer();
@@ -359,6 +364,62 @@ function registerFocusedWindowShortcut(window: BrowserWindow) {
   });
 }
 
+function startSidecarChild() {
+  if (!shouldManageSidecarChild() || sidecarProc) {
+    return;
+  }
+
+  const sidecarPath = join(process.resourcesPath, "sidecar");
+  if (!existsSync(sidecarPath)) {
+    reportStatus("ipc.disconnected");
+    logEvent({ level: "error", module: "sidecar", type: "missing-binary", meta: { sidecarPath } });
+    return;
+  }
+
+  const child = spawn(sidecarPath, [], { detached: false, stdio: "ignore" });
+  sidecarProc = child;
+  logEvent({ level: "info", module: "sidecar", type: "started", meta: { pid: child.pid } });
+  child.once("error", (error) => {
+    if (sidecarProc === child) {
+      sidecarProc = null;
+    }
+    reportStatus("ipc.disconnected");
+    logEvent({ level: "error", module: "sidecar", type: "spawn-error", meta: errorMeta(error) });
+    scheduleSidecarRestart();
+  });
+  child.once("exit", (code, signal) => {
+    if (sidecarProc === child) {
+      sidecarProc = null;
+    }
+    logEvent({ level: "warn", module: "sidecar", type: "exited", meta: { code, signal } });
+    scheduleSidecarRestart();
+  });
+}
+
+function shouldManageSidecarChild(): boolean {
+  return app.isPackaged && process.env.NODE_ENV !== "development" && !isQuitting;
+}
+
+function scheduleSidecarRestart() {
+  if (!shouldManageSidecarChild() || sidecarRestartTimer) {
+    return;
+  }
+
+  sidecarRestartTimer = setTimeout(() => {
+    sidecarRestartTimer = null;
+    startSidecarChild();
+  }, 2000);
+}
+
+function stopSidecarChild() {
+  if (sidecarRestartTimer) {
+    clearTimeout(sidecarRestartTimer);
+    sidecarRestartTimer = null;
+  }
+  sidecarProc?.kill();
+  sidecarProc = null;
+}
+
 function connectSidecar() {
   const socketPath = join(homedir(), "Library/Application Support/ai-interview/sidecar.sock");
   const client = new IpcClient(socketPath);
@@ -496,6 +557,7 @@ app.whenReady().then(() => {
   }
   void loadStoredSettings();
   createTray();
+  startSidecarChild();
 
   const window = new BrowserWindow({
     width: 480,
@@ -522,7 +584,7 @@ app.whenReady().then(() => {
       floatingWindow = null;
     }
   });
-  setTimeout(connectSidecar, 200);
+  setTimeout(connectSidecar, app.isPackaged ? 500 : 200);
   triggerTickTimer = setInterval(() => triggerLogic.tick(Date.now()), 200);
   if (!globalShortcut.register("CommandOrControl+Shift+Space", fireAnswer)) {
     console.warn("[trigger] CommandOrControl+Shift+Space registration failed");
@@ -543,12 +605,14 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  isQuitting = true;
   globalShortcut.unregisterAll();
   if (triggerTickTimer) {
     clearInterval(triggerTickTimer);
     triggerTickTimer = null;
   }
   triggerer.abort();
+  stopSidecarChild();
   tray?.destroy();
   tray = null;
   void logger?.close().catch((error) => console.error("[logger]", error));
