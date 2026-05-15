@@ -2,12 +2,22 @@ import { app, BrowserWindow } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AudioBuffer } from "./audio/AudioBuffer";
+import { MockASRClient } from "./asr/MockASRClient";
+import { TranscriptStore } from "./asr/TranscriptStore";
 import { IpcClient } from "./ipc/IpcClient";
 
 let floatingWindow: BrowserWindow | null = null;
 let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
 const audioBuffer = new AudioBuffer();
+const transcriptStore = new TranscriptStore();
+const asr = new MockASRClient({
+  script: [
+    { afterMs: 800, type: "partial", text: "你介绍一下" },
+    { afterMs: 1500, type: "partial", text: "你介绍一下自己" },
+    { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
+  ],
+});
 
 function loadFloatingWindow(window: BrowserWindow) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -54,6 +64,7 @@ function connectSidecar() {
     if (event.t === "audio.chunk") {
       const pcm = Buffer.from(event.p.pcm_b64, "base64");
       audioBuffer.push(pcm);
+      asr.pushAudio(pcm);
       sendToFloating("audio-level", audioBuffer.rmsLevel());
     }
 
@@ -70,6 +81,16 @@ function connectSidecar() {
   sidecar = client;
   client.connect();
 }
+
+void asr.connect();
+asr.on("transcript", (event) => {
+  if (event.type === "partial") {
+    transcriptStore.applyPartial(event.text, event.ts);
+  } else {
+    transcriptStore.applyFinal(event.text, event.ts);
+  }
+  sendToFloating("transcript", transcriptStore.snapshot());
+});
 
 app.whenReady().then(() => {
   floatingWindow = new BrowserWindow({
@@ -93,6 +114,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  asr.disconnect();
   if (process.platform !== "darwin") {
     app.quit();
   }

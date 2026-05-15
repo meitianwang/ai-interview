@@ -6,6 +6,7 @@ declare global {
     api?: {
       onSidecarEvent: (callback: (event: unknown) => void) => () => void;
       onAudioLevel: (callback: (level: number) => void) => () => void;
+      onTranscript: (callback: (transcript: string) => void) => () => void;
     };
   }
 }
@@ -13,9 +14,11 @@ declare global {
 function App() {
   const [lastEvent, setLastEvent] = useState<unknown>(null);
   const [level, setLevel] = useState(0);
+  const [transcript, setTranscript] = useState("");
 
   useEffect(() => window.api?.onSidecarEvent(setLastEvent), []);
   useEffect(() => window.api?.onAudioLevel(setLevel), []);
+  useEffect(() => window.api?.onTranscript(setTranscript), []);
 
   return (
     <div>
@@ -37,6 +40,9 @@ function App() {
             width: `${Math.round(level * 100)}%`,
           }}
         />
+      </div>
+      <div style={{ color: "#d1d5db", fontSize: 13, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+        {transcript || <span style={{ color: "#6b7280" }}>聆听中...</span>}
       </div>
       {lastEvent ? (
         <pre style={{ color: "#6dbf6d", fontSize: 11, margin: 0, whiteSpace: "pre-wrap" }}>
