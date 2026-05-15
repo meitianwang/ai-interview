@@ -13,6 +13,7 @@ import { LLMRouter } from "./llm/LLMRouter";
 import { MockLLMClient } from "./llm/MockLLMClient";
 import { OpenAIClient } from "./llm/OpenAIClient";
 import { PromptBuilder } from "./prompt/PromptBuilder";
+import { StealthCoordinator } from "./stealth/StealthCoordinator";
 import { Triggerer } from "./trigger/Triggerer";
 
 let floatingWindow: BrowserWindow | null = null;
@@ -23,6 +24,7 @@ const transcriptStore = new TranscriptStore();
 const contextManager = new ContextManager({ transcriptStore });
 const promptBuilder = new PromptBuilder();
 const classifier = new QuestionClassifier();
+const stealth = new StealthCoordinator();
 const asr =
   process.env.ASR_PROVIDER === "huoshan"
     ? createASRClient({
@@ -159,7 +161,7 @@ app.whenReady().then(() => {
     app.dock?.hide();
   }
 
-  floatingWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 480,
     height: 220,
     frame: false,
@@ -171,11 +173,16 @@ app.whenReady().then(() => {
       nodeIntegration: false,
     },
   });
+  floatingWindow = window;
 
-  loadFloatingWindow(floatingWindow);
-  registerFocusedWindowShortcut(floatingWindow);
-  floatingWindow.on("closed", () => {
-    floatingWindow = null;
+  stealth.protect(window);
+  loadFloatingWindow(window);
+  registerFocusedWindowShortcut(window);
+  window.on("closed", () => {
+    stealth.unprotect(window);
+    if (floatingWindow === window) {
+      floatingWindow = null;
+    }
   });
   setTimeout(connectSidecar, 200);
   if (!globalShortcut.register("CommandOrControl+Shift+Space", fireAnswer)) {
