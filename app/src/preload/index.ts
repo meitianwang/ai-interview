@@ -41,4 +41,6 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("answer-done", handler);
     return () => ipcRenderer.off("answer-done", handler);
   },
+  loadSettings: () => ipcRenderer.invoke("settings:load"),
+  saveSettings: (settings: unknown) => ipcRenderer.invoke("settings:save", settings),
 });

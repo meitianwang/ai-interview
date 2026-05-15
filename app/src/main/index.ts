@@ -1,4 +1,5 @@
-import { app, BrowserWindow, globalShortcut } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import type { SidecarEvent } from "@ai-interview/shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +21,10 @@ import { Triggerer } from "./trigger/Triggerer";
 import { EnergyVADProcessor } from "./vad/VADProcessor";
 
 let floatingWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
+const settingsEntry = "src/renderer/settings/index.html";
 const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
 const contextManager = new ContextManager({ transcriptStore });
@@ -53,14 +56,33 @@ const triggerLogic = new TriggerLogic({ silenceMs: 1500, onTrigger: fireAnswer }
 let answerInFlight = false;
 let triggerTickTimer: NodeJS.Timeout | null = null;
 
-function loadFloatingWindow(window: BrowserWindow) {
+interface SettingsPayload {
+  resume?: string;
+  jd?: string;
+  anthropicKey?: string;
+  openaiKey?: string;
+  huoshanAppId?: string;
+  huoshanToken?: string;
+}
+
+const settingsCache: SettingsPayload = {};
+
+function loadRendererWindow(window: BrowserWindow, entry: string) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    window.loadURL(new URL(floatingEntry, devServerUrl).toString());
+    window.loadURL(new URL(entry, devServerUrl).toString());
     return;
   }
 
-  window.loadFile(join(app.getAppPath(), "dist", floatingEntry));
+  window.loadFile(join(app.getAppPath(), "dist", entry));
+}
+
+function loadFloatingWindow(window: BrowserWindow) {
+  loadRendererWindow(window, floatingEntry);
+}
+
+function loadSettingsWindow(window: BrowserWindow) {
+  loadRendererWindow(window, settingsEntry);
 }
 
 function sendToFloating(channel: string, payload: unknown) {
@@ -95,6 +117,64 @@ function abortAnswer() {
   triggerer.abort();
   answerInFlight = false;
   sendToFloating("answer-done", null);
+}
+
+function openSettings() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+
+  const window = new BrowserWindow({
+    width: 820,
+    height: 720,
+    minWidth: 620,
+    minHeight: 560,
+    title: "AI Interview 设置",
+    webPreferences: {
+      preload: join(__dirname, "preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  settingsWindow = window;
+  loadSettingsWindow(window);
+  window.on("closed", () => {
+    if (settingsWindow === window) {
+      settingsWindow = null;
+    }
+  });
+}
+
+function sanitizeSettings(payload: unknown): SettingsPayload {
+  const source: Partial<Record<keyof SettingsPayload, unknown>> =
+    payload && typeof payload === "object" ? (payload as Partial<Record<keyof SettingsPayload, unknown>>) : {};
+  const readString = (key: keyof SettingsPayload) => {
+    const value = source[key];
+    return typeof value === "string" ? value : settingsCache[key] ?? "";
+  };
+
+  return {
+    resume: readString("resume"),
+    jd: readString("jd"),
+    anthropicKey: readString("anthropicKey"),
+    openaiKey: readString("openaiKey"),
+    huoshanAppId: readString("huoshanAppId"),
+    huoshanToken: readString("huoshanToken"),
+  };
+}
+
+function applySettingsToRuntime(settings: SettingsPayload) {
+  contextManager.updateResume(settings.resume ?? "");
+  contextManager.updateJD(settings.jd ?? "");
+}
+
+function assertSettingsSender(event: IpcMainInvokeEvent) {
+  const url = event.senderFrame?.url ?? event.sender.getURL();
+  if (!url.includes(settingsEntry)) {
+    throw new Error(`settings IPC rejected from ${url}`);
+  }
 }
 
 function registerFocusedWindowShortcut(window: BrowserWindow) {
@@ -185,6 +265,17 @@ asr.on("transcript", (event) => {
 triggerer.on("start", () => sendToFloating("answer-start", null));
 triggerer.on("token", (text) => sendToFloating("answer-token", text));
 triggerer.on("done", () => sendToFloating("answer-done", null));
+ipcMain.handle("settings:load", (event) => {
+  assertSettingsSender(event);
+  return { ...settingsCache };
+});
+ipcMain.handle("settings:save", (event, payload: SettingsPayload) => {
+  assertSettingsSender(event);
+  const settings = sanitizeSettings(payload);
+  Object.assign(settingsCache, settings);
+  applySettingsToRuntime(settings);
+  return { ...settingsCache };
+});
 
 app.whenReady().then(() => {
   if (process.platform === "darwin") {
@@ -224,6 +315,9 @@ app.whenReady().then(() => {
   }
   if (!globalShortcut.register("CommandOrControl+Shift+X", abortAnswer)) {
     console.warn("[trigger] CommandOrControl+Shift+X registration failed");
+  }
+  if (!globalShortcut.register("CommandOrControl+Shift+,", openSettings)) {
+    console.warn("[settings] CommandOrControl+Shift+, registration failed");
   }
 });
 

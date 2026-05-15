@@ -5,21 +5,6 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import "highlight.js/styles/github-dark.css";
 
-declare global {
-  interface Window {
-    api?: {
-      onSidecarEvent: (callback: (event: unknown) => void) => () => void;
-      onAudioLevel: (callback: (level: number) => void) => () => void;
-      onTranscript: (callback: (transcript: string) => void) => () => void;
-      onShareState: (callback: (active: boolean) => void) => () => void;
-      onOCR: (callback: (text: string) => void) => () => void;
-      onAnswerStart: (callback: () => void) => () => void;
-      onAnswerToken: (callback: (token: string) => void) => () => void;
-      onAnswerDone: (callback: () => void) => () => void;
-    };
-  }
-}
-
 function App() {
   const [sidecarStatus, setSidecarStatus] = useState("等待 sidecar 事件...");
   const [level, setLevel] = useState(0);
@@ -29,17 +14,17 @@ function App() {
   const [shareActive, setShareActive] = useState(false);
   const [ocr, setOCR] = useState("");
 
-  useEffect(() => window.api?.onSidecarEvent((event) => setSidecarStatus(formatEventStatus(event))), []);
-  useEffect(() => window.api?.onAudioLevel(setLevel), []);
-  useEffect(() => window.api?.onTranscript(setTranscript), []);
-  useEffect(() => window.api?.onShareState(setShareActive), []);
-  useEffect(() => window.api?.onOCR(setOCR), []);
-  useEffect(() => window.api?.onAnswerStart(() => {
+  useEffect(() => window.api?.onSidecarEvent?.((event) => setSidecarStatus(formatEventStatus(event))), []);
+  useEffect(() => window.api?.onAudioLevel?.(setLevel), []);
+  useEffect(() => window.api?.onTranscript?.(setTranscript), []);
+  useEffect(() => window.api?.onShareState?.(setShareActive), []);
+  useEffect(() => window.api?.onOCR?.(setOCR), []);
+  useEffect(() => window.api?.onAnswerStart?.(() => {
     setAnswer("");
     setGenerating(true);
   }), []);
-  useEffect(() => window.api?.onAnswerToken((token) => setAnswer((current) => current + token)), []);
-  useEffect(() => window.api?.onAnswerDone(() => setGenerating(false)), []);
+  useEffect(() => window.api?.onAnswerToken?.((token) => setAnswer((current) => current + token)), []);
+  useEffect(() => window.api?.onAnswerDone?.(() => setGenerating(false)), []);
 
   return (
     <div>
