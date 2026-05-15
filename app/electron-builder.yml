@@ -2,12 +2,21 @@ appId: com.airesearch.ai-interview
 productName: AI Interview
 mac:
   category: public.app-category.productivity
+  identity: ${env.MAC_CODESIGN_IDENTITY}
   hardenedRuntime: true
   gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize:
+    teamId: ${env.APPLE_TEAM_ID}
   extendInfo:
     LSUIElement: true
     NSScreenCaptureUsageDescription: 用于捕获面试软件的系统音频以提供实时辅助
     NSMicrophoneUsageDescription: 备用麦克风采集
+afterSign: scripts/notarize.cjs
+extraResources:
+  - from: resources/sidecar
+    to: sidecar
 files:
   - dist/**/*
   - dist-electron/**/*
