@@ -1,0 +1,7 @@
+appId: com.aiinterview.app
+productName: AI Interview
+files:
+  - dist/**
+  - package.json
+mac:
+  category: public.app-category.productivity

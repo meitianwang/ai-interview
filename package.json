@@ -1,0 +1,15 @@
+{
+  "name": "ai-interview",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "test": "pnpm -r test",
+    "build:app": "pnpm --filter app build",
+    "build:sidecar": "cd sidecar && swift build -c release"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

@@ -1,1 +1,18 @@
 .superpowers/
+
+# Node
+node_modules/
+dist/
+dist-electron/
+
+# Swift
+sidecar/.build/
+sidecar/.swiftpm/
+sidecar/Package.resolved
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
