@@ -1,11 +1,6 @@
-export interface Settings {
-  resume?: string;
-  jd?: string;
-  anthropicKey?: string;
-  openaiKey?: string;
-  huoshanAppId?: string;
-  huoshanToken?: string;
-}
+import type { Settings } from "../main/secrets/SecretStore";
+
+export type { Settings };
 
 export interface RendererAPI {
   onSidecarEvent: (callback: (event: unknown) => void) => () => void;

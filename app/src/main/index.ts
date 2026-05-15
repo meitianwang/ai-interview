@@ -15,6 +15,7 @@ import { LLMRouter } from "./llm/LLMRouter";
 import { MockLLMClient } from "./llm/MockLLMClient";
 import { OpenAIClient } from "./llm/OpenAIClient";
 import { PromptBuilder } from "./prompt/PromptBuilder";
+import { SecretStore, type Settings } from "./secrets/SecretStore";
 import { StealthCoordinator } from "./stealth/StealthCoordinator";
 import { TriggerLogic } from "./trigger/TriggerLogic";
 import { Triggerer } from "./trigger/Triggerer";
@@ -31,6 +32,15 @@ const contextManager = new ContextManager({ transcriptStore });
 const promptBuilder = new PromptBuilder();
 const classifier = new QuestionClassifier();
 const stealth = new StealthCoordinator();
+const defaultSettings: Settings = {
+  resume: "",
+  jd: "",
+  anthropicKey: "",
+  openaiKey: "",
+  huoshanAppId: "",
+  huoshanToken: "",
+};
+let settingsCache: Settings = { ...defaultSettings };
 const asr =
   process.env.ASR_PROVIDER === "huoshan"
     ? createASRClient({
@@ -49,23 +59,14 @@ const asr =
           { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
         ],
       });
-const llmRouter = new LLMRouter(createLLMClients(), { timeoutMs: 8000 });
+const llmRouter = new LLMRouter(createLLMClients(settingsCache), { timeoutMs: 8000 });
 const triggerer = new Triggerer(contextManager, promptBuilder, llmRouter);
 const vad = new EnergyVADProcessor({ threshold: 0.02 });
 const triggerLogic = new TriggerLogic({ silenceMs: 1500, onTrigger: fireAnswer });
 let answerInFlight = false;
 let triggerTickTimer: NodeJS.Timeout | null = null;
 
-interface SettingsPayload {
-  resume?: string;
-  jd?: string;
-  anthropicKey?: string;
-  openaiKey?: string;
-  huoshanAppId?: string;
-  huoshanToken?: string;
-}
-
-const settingsCache: SettingsPayload = {};
+let secretStore: SecretStore | null = null;
 
 function loadRendererWindow(window: BrowserWindow, entry: string) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -147,12 +148,12 @@ function openSettings() {
   });
 }
 
-function sanitizeSettings(payload: unknown): SettingsPayload {
-  const source: Partial<Record<keyof SettingsPayload, unknown>> =
-    payload && typeof payload === "object" ? (payload as Partial<Record<keyof SettingsPayload, unknown>>) : {};
-  const readString = (key: keyof SettingsPayload) => {
+function sanitizeSettings(payload: unknown): Settings {
+  const source: Partial<Record<keyof Settings, unknown>> =
+    payload && typeof payload === "object" ? (payload as Partial<Record<keyof Settings, unknown>>) : {};
+  const readString = (key: keyof Settings) => {
     const value = source[key];
-    return typeof value === "string" ? value : settingsCache[key] ?? "";
+    return typeof value === "string" ? value : settingsCache[key];
   };
 
   return {
@@ -165,9 +166,28 @@ function sanitizeSettings(payload: unknown): SettingsPayload {
   };
 }
 
-function applySettingsToRuntime(settings: SettingsPayload) {
-  contextManager.updateResume(settings.resume ?? "");
-  contextManager.updateJD(settings.jd ?? "");
+function applySettingsToRuntime(settings: Settings) {
+  contextManager.updateResume(settings.resume);
+  contextManager.updateJD(settings.jd);
+  llmRouter.updateClients(createLLMClients(settings));
+}
+
+function getSecretStore() {
+  if (!secretStore) {
+    secretStore = new SecretStore({ configPath: join(app.getPath("userData"), "settings.json") });
+  }
+
+  return secretStore;
+}
+
+async function loadStoredSettings() {
+  try {
+    const settings = await getSecretStore().loadAll();
+    settingsCache = settings;
+    applySettingsToRuntime(settings);
+  } catch (error) {
+    console.error("[settings]", error);
+  }
 }
 
 function assertSettingsSender(event: IpcMainInvokeEvent) {
@@ -265,15 +285,17 @@ asr.on("transcript", (event) => {
 triggerer.on("start", () => sendToFloating("answer-start", null));
 triggerer.on("token", (text) => sendToFloating("answer-token", text));
 triggerer.on("done", () => sendToFloating("answer-done", null));
-ipcMain.handle("settings:load", (event) => {
+ipcMain.handle("settings:load", async (event) => {
   assertSettingsSender(event);
+  settingsCache = await getSecretStore().loadAll();
+  applySettingsToRuntime(settingsCache);
   return { ...settingsCache };
 });
-ipcMain.handle("settings:save", (event, payload: SettingsPayload) => {
+ipcMain.handle("settings:save", async (event, payload: unknown) => {
   assertSettingsSender(event);
   const settings = sanitizeSettings(payload);
-  Object.assign(settingsCache, settings);
-  applySettingsToRuntime(settings);
+  settingsCache = await getSecretStore().saveAll(settings);
+  applySettingsToRuntime(settingsCache);
   return { ...settingsCache };
 });
 
@@ -282,6 +304,7 @@ app.whenReady().then(() => {
     app.setActivationPolicy("accessory");
     app.dock?.hide();
   }
+  void loadStoredSettings();
 
   const window = new BrowserWindow({
     width: 480,
@@ -337,24 +360,41 @@ app.on("will-quit", () => {
   triggerer.abort();
 });
 
-function createLLMClients(): { primary: LLMClient; fallback: LLMClient } {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!anthropicKey || !openaiKey) {
+function createLLMClients(settings: Pick<Settings, "anthropicKey" | "openaiKey">): {
+  primary: LLMClient;
+  fallback: LLMClient;
+} {
+  const anthropicKey = settings.anthropicKey || process.env.ANTHROPIC_API_KEY;
+  const openaiKey = settings.openaiKey || process.env.OPENAI_API_KEY;
+  const openaiClient = openaiKey
+    ? new OpenAIClient({
+        apiKey: openaiKey,
+        model: process.env.OPENAI_MODEL ?? "gpt-5.4",
+      })
+    : null;
+  const claudeClient = anthropicKey
+    ? new ClaudeClient({
+        apiKey: anthropicKey,
+        model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
+      })
+    : null;
+
+  if (claudeClient) {
     return {
-      primary: new MockLLMClient(),
-      fallback: new MockLLMClient("备用答案：请先补充 API key。"),
+      primary: claudeClient,
+      fallback: openaiClient ?? new MockLLMClient("备用答案：请补充 OpenAI API key。"),
+    };
+  }
+
+  if (openaiClient) {
+    return {
+      primary: openaiClient,
+      fallback: new MockLLMClient("备用答案：请补充 Anthropic API key。"),
     };
   }
 
   return {
-    primary: new ClaudeClient({
-      apiKey: anthropicKey,
-      model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
-    }),
-    fallback: new OpenAIClient({
-      apiKey: openaiKey,
-      model: process.env.OPENAI_MODEL ?? "gpt-5.4",
-    }),
+    primary: new MockLLMClient(),
+    fallback: new MockLLMClient("备用答案：请先补充 API key。"),
   };
 }

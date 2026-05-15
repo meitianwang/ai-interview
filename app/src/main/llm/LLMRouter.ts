@@ -7,11 +7,16 @@ export class LLMRouter extends EventEmitter {
   private aborted = false;
 
   constructor(
-    private readonly clients: { primary: LLMClient; fallback: LLMClient },
+    private clients: { primary: LLMClient; fallback: LLMClient },
     options: { timeoutMs?: number } = {},
   ) {
     super();
     this.timeoutMs = options.timeoutMs ?? 8000;
+  }
+
+  updateClients(clients: { primary: LLMClient; fallback: LLMClient }): void {
+    this.abort();
+    this.clients = clients;
   }
 
   async route(prompt: { system: string; user: string }): Promise<void> {

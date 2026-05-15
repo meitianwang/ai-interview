@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { LLMRouter } from "../../src/main/llm/LLMRouter";
 
 class FakeClient extends EventEmitter {
+  streamCalls = 0;
+
   constructor(
     public name: string,
     private readonly behavior: "ok" | "fail" | "timeout",
@@ -11,6 +13,7 @@ class FakeClient extends EventEmitter {
   }
 
   async stream(): Promise<void> {
+    this.streamCalls += 1;
     if (this.behavior === "fail") {
       throw new Error("boom");
     }
@@ -80,5 +83,18 @@ describe("LLMRouter", () => {
     await route;
 
     expect(events).toEqual([]);
+  });
+
+  it("uses updated clients for later routes", async () => {
+    const oldPrimary = new FakeClient("old-primary", "ok") as any;
+    const newPrimary = new FakeClient("new-primary", "ok") as any;
+    const fallback = new FakeClient("fallback", "ok") as any;
+    const router = new LLMRouter({ primary: oldPrimary, fallback }, { timeoutMs: 100 });
+
+    router.updateClients({ primary: newPrimary, fallback });
+    await router.route({ system: "s", user: "u" });
+
+    expect(oldPrimary.streamCalls).toBe(0);
+    expect(newPrimary.streamCalls).toBe(1);
   });
 });
