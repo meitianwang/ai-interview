@@ -87,20 +87,32 @@ function fireAnswer() {
     });
 }
 
+function abortAnswer() {
+  if (!answerInFlight) {
+    return;
+  }
+
+  triggerer.abort();
+  answerInFlight = false;
+  sendToFloating("answer-done", null);
+}
+
 function registerFocusedWindowShortcut(window: BrowserWindow) {
   window.webContents.on("before-input-event", (event, input) => {
-    const isShortcut =
-      input.type === "keyDown" &&
-      input.shift &&
-      (input.control || input.meta) &&
-      (input.code === "Space" || input.key === " ");
+    const isModifierShortcut = input.type === "keyDown" && input.shift && (input.control || input.meta);
+    const isAnswerShortcut = isModifierShortcut && (input.code === "Space" || input.key === " ");
+    const isAbortShortcut = isModifierShortcut && (input.code === "KeyX" || input.key.toLowerCase() === "x");
 
-    if (!isShortcut) {
+    if (!isAnswerShortcut && !isAbortShortcut) {
       return;
     }
 
     event.preventDefault();
-    fireAnswer();
+    if (isAbortShortcut) {
+      abortAnswer();
+    } else {
+      fireAnswer();
+    }
   });
 }
 
@@ -202,6 +214,9 @@ app.whenReady().then(() => {
   triggerTickTimer = setInterval(() => triggerLogic.tick(Date.now()), 200);
   if (!globalShortcut.register("CommandOrControl+Shift+Space", fireAnswer)) {
     console.warn("[trigger] CommandOrControl+Shift+Space registration failed");
+  }
+  if (!globalShortcut.register("CommandOrControl+Shift+X", abortAnswer)) {
+    console.warn("[trigger] CommandOrControl+Shift+X registration failed");
   }
 });
 

@@ -16,13 +16,18 @@ export class Triggerer extends EventEmitter {
     const context = this.contextManager.buildContext({ transcriptTailSeconds: 30 });
     const prompt = this.promptBuilder.build({ questionType, context });
     let collected = "";
+    let completed = false;
+    const cleanup = () => {
+      this.router.off("token", onToken);
+      this.router.off("done", onDone);
+    };
     const onToken = (token: { text: string }) => {
       collected += token.text;
       this.emit("token", token.text);
     };
     const onDone = () => {
-      this.router.off("token", onToken);
-      this.router.off("done", onDone);
+      completed = true;
+      cleanup();
       this.emit("done", collected);
       this.contextManager.appendHistory(context.transcript, collected);
     };
@@ -30,7 +35,13 @@ export class Triggerer extends EventEmitter {
     this.emit("start", { questionType });
     this.router.on("token", onToken);
     this.router.once("done", onDone);
-    await this.router.route(prompt);
+    try {
+      await this.router.route(prompt);
+    } finally {
+      if (!completed) {
+        cleanup();
+      }
+    }
   }
 
   abort(): void {

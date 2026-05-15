@@ -62,7 +62,7 @@ function App() {
         建议答案{generating ? " · 生成中" : ""}
       </div>
       <div style={{ color: "#fff", fontSize: 13, marginBottom: 8, whiteSpace: "pre-wrap" }}>
-        {answer || <span style={{ color: "#6b7280" }}>按 Ctrl/Cmd+Shift+Space 触发</span>}
+        {answer || <span style={{ color: "#6b7280" }}>按 Ctrl/Cmd+Shift+Space 触发，Ctrl/Cmd+Shift+X 中断</span>}
       </div>
       <div style={{ color: shareActive ? "#fbbf24" : "#6b7280", fontSize: 11 }}>
         {shareActive ? "屏幕共享检测中" : sidecarStatus}

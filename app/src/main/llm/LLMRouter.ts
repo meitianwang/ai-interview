@@ -3,6 +3,8 @@ import type { LLMClient, LLMTokenEvent } from "./LLMClient";
 
 export class LLMRouter extends EventEmitter {
   private readonly timeoutMs: number;
+  private abortActiveClient: (() => void) | null = null;
+  private aborted = false;
 
   constructor(
     private readonly clients: { primary: LLMClient; fallback: LLMClient },
@@ -13,17 +15,27 @@ export class LLMRouter extends EventEmitter {
   }
 
   async route(prompt: { system: string; user: string }): Promise<void> {
+    this.aborted = false;
     const primarySucceeded = await this.tryClient(this.clients.primary, prompt);
+    if (this.aborted) {
+      return;
+    }
     if (!primarySucceeded) {
       this.emit("fallback", { from: this.clients.primary.name, to: this.clients.fallback.name });
       await this.tryClient(this.clients.fallback, prompt);
+      if (this.aborted) {
+        return;
+      }
     }
     this.emit("done");
   }
 
   abort(): void {
+    this.aborted = true;
     this.clients.primary.abort();
     this.clients.fallback.abort();
+    this.abortActiveClient?.();
+    this.abortActiveClient = null;
   }
 
   private tryClient(client: LLMClient, prompt: { system: string; user: string }): Promise<boolean> {
@@ -32,6 +44,9 @@ export class LLMRouter extends EventEmitter {
       let gotToken = false;
       const cleanup = () => {
         clearTimeout(timeout);
+        if (this.abortActiveClient === abortCurrentClient) {
+          this.abortActiveClient = null;
+        }
         client.off("token", onToken);
         client.off("done", onDone);
         client.off("error", onError);
@@ -57,7 +72,9 @@ export class LLMRouter extends EventEmitter {
         client.abort();
         finish(false);
       }, this.timeoutMs);
+      const abortCurrentClient = () => finish(false);
 
+      this.abortActiveClient = abortCurrentClient;
       client.on("token", onToken);
       client.once("done", onDone);
       client.once("error", onError);

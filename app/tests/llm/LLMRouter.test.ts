@@ -66,4 +66,19 @@ describe("LLMRouter", () => {
 
     expect(events).toEqual(["fallback", "token"]);
   });
+
+  it("aborts an active route without falling back", async () => {
+    const primary = new FakeClient("primary", "timeout") as any;
+    const fallback = new FakeClient("fallback", "ok") as any;
+    const router = new LLMRouter({ primary, fallback }, { timeoutMs: 1000 });
+    const events: string[] = [];
+    router.on("fallback", () => events.push("fallback"));
+    router.on("done", () => events.push("done"));
+
+    const route = router.route({ system: "s", user: "u" });
+    router.abort();
+    await route;
+
+    expect(events).toEqual([]);
+  });
 });
