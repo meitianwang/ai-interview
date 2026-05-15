@@ -2,6 +2,7 @@ export type StatusLevel = "green" | "yellow" | "orange" | "red";
 
 const SEVERITY: Record<string, StatusLevel> = {
   "asr.fallback": "yellow",
+  "asr.reconnecting": "yellow",
   "llm.fallback": "yellow",
   "asr.failed": "orange",
   "llm.failed": "orange",

@@ -3,8 +3,9 @@ import type { IpcMainInvokeEvent } from "electron";
 import type { SidecarEvent } from "@ai-interview/shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { AutoReconnectASR } from "./asr/AutoReconnectASR";
 import { AudioBuffer } from "./audio/AudioBuffer";
-import { createASRClient } from "./asr/ASRFactory";
+import { createASRClient, type ASRConfig } from "./asr/ASRFactory";
 import { TranscriptStore } from "./asr/TranscriptStore";
 import { QuestionClassifier } from "./classifier/QuestionClassifier";
 import { ContextManager } from "./context/ContextManager";
@@ -44,24 +45,25 @@ const defaultSettings: Settings = {
   huoshanToken: "",
 };
 let settingsCache: Settings = { ...defaultSettings };
-const asr =
+const asrConfig: ASRConfig =
   process.env.ASR_PROVIDER === "huoshan"
-    ? createASRClient({
+    ? {
         provider: "huoshan",
         url: process.env.HUOSHAN_URL ?? "",
         appId: process.env.HUOSHAN_APPID ?? "",
         token: process.env.HUOSHAN_TOKEN ?? "",
         sampleRate: 16_000,
         language: "zh-CN",
-      })
-    : createASRClient({
+      }
+    : {
         provider: "mock",
         script: [
           { afterMs: 800, type: "partial", text: "你介绍一下" },
           { afterMs: 1500, type: "partial", text: "你介绍一下自己" },
           { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
         ],
-      });
+      };
+const asr = new AutoReconnectASR(() => createASRClient(asrConfig), { delayMs: 1500, maxRetries: 5 });
 const llmRouter = new LLMRouter(createLLMClients(settingsCache), { timeoutMs: 8000 });
 const triggerer = new Triggerer(contextManager, promptBuilder, llmRouter);
 const vad = new EnergyVADProcessor({ threshold: 0.02 });
@@ -367,10 +369,12 @@ function connectSidecar() {
   client.connect();
 }
 
-asr.connect().catch((error) => {
-  reportStatus("asr.failed");
-  console.error("[asr]", error);
+asr.on("connected", () => {
+  clearStatus("asr.reconnecting");
+  clearStatus("asr.failed");
 });
+asr.on("reconnecting", () => reportStatus("asr.reconnecting"));
+asr.on("failed", () => reportStatus("asr.failed"));
 asr.on("error", (error) => {
   reportStatus("asr.failed");
   console.error("[asr]", error);
@@ -384,6 +388,10 @@ asr.on("transcript", (event) => {
   }
   triggerLogic.updateTranscriptTail(transcriptStore.tail(40));
   sendToFloating("transcript", transcriptStore.snapshot());
+});
+asr.connect().catch((error) => {
+  reportStatus("asr.failed");
+  console.error("[asr]", error);
 });
 llmRouter.on("fallback", () => reportStatus("llm.fallback"));
 llmRouter.on("client-error", () => reportStatus("llm.failed"));
