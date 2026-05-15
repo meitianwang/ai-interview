@@ -6,4 +6,9 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("sidecar-event", handler);
     return () => ipcRenderer.off("sidecar-event", handler);
   },
+  onAudioLevel: (callback: (level: number) => void) => {
+    const handler = (_: unknown, level: number) => callback(level);
+    ipcRenderer.on("audio-level", handler);
+    return () => ipcRenderer.off("audio-level", handler);
+  },
 });

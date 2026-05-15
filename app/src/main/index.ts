@@ -1,11 +1,13 @@
 import { app, BrowserWindow } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { AudioBuffer } from "./audio/AudioBuffer";
 import { IpcClient } from "./ipc/IpcClient";
 
 let floatingWindow: BrowserWindow | null = null;
 let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
+const audioBuffer = new AudioBuffer();
 
 function loadFloatingWindow(window: BrowserWindow) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -17,11 +19,27 @@ function loadFloatingWindow(window: BrowserWindow) {
   window.loadFile(join(app.getAppPath(), "dist", floatingEntry));
 }
 
+function sendToFloating(channel: string, payload: unknown) {
+  if (!floatingWindow || floatingWindow.isDestroyed() || floatingWindow.webContents.isDestroyed()) {
+    return;
+  }
+
+  floatingWindow.webContents.send(channel, payload);
+}
+
 function connectSidecar() {
   const socketPath = join(homedir(), "Library/Application Support/ai-interview/sidecar.sock");
   const client = new IpcClient(socketPath);
 
   client.on("connect", () => {
+    client.send({
+      v: 1,
+      t: "capture.start",
+      seq: client.nextSeq(),
+      ts: Date.now(),
+      p: {},
+    });
+
     setTimeout(() => {
       client.send({
         v: 1,
@@ -33,7 +51,13 @@ function connectSidecar() {
     }, 3000);
   });
   client.on("event", (event) => {
-    floatingWindow?.webContents.send("sidecar-event", event);
+    if (event.t === "audio.chunk") {
+      const pcm = Buffer.from(event.p.pcm_b64, "base64");
+      audioBuffer.push(pcm);
+      sendToFloating("audio-level", audioBuffer.rmsLevel());
+    }
+
+    sendToFloating("sidecar-event", event);
   });
   client.on("error", (error) => {
     console.error("[sidecar]", error);
@@ -62,6 +86,9 @@ app.whenReady().then(() => {
   });
 
   loadFloatingWindow(floatingWindow);
+  floatingWindow.on("closed", () => {
+    floatingWindow = null;
+  });
   setTimeout(connectSidecar, 200);
 });
 
