@@ -153,6 +153,11 @@ function connectSidecar() {
       sendToFloating("share-state", event.p.active);
     }
 
+    if (event.t === "ocr.result") {
+      contextManager.updateOCR(event.p.text);
+      sendToFloating("ocr", event.p.text);
+    }
+
     sendToFloating("sidecar-event", event);
   });
   client.on("error", (error) => {

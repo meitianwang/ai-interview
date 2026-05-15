@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("share-state", handler);
     return () => ipcRenderer.off("share-state", handler);
   },
+  onOCR: (callback: (text: string) => void) => {
+    const handler = (_: unknown, text: string) => callback(text);
+    ipcRenderer.on("ocr", handler);
+    return () => ipcRenderer.off("ocr", handler);
+  },
   onAnswerStart: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on("answer-start", handler);

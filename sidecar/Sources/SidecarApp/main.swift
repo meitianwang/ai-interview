@@ -1,3 +1,4 @@
+import Carbon
 import Darwin
 import Foundation
 import SidecarCore
@@ -16,13 +17,15 @@ try? FileManager.default.createDirectory(
 let server = IpcServer(socketPath: path)
 private let captureBridge = CaptureBridge(server: server)
 private let shareDetector = ScreenShareDetector()
-private var screenShareSequence = 0
+private let hotkey = HotkeyService()
+private let eventSequencer = EventSequencer()
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 
 let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 let shutdown = {
+    hotkey.unregisterAll()
     shareDetector.stop()
     captureBridge.stop()
     server.stop()
@@ -49,18 +52,59 @@ server.onCommand = { (command: ElectronCommand) in
 }
 
 shareDetector.onChange = { active in
-    screenShareSequence += 1
     server.emit(.screenShareChanged(
-        seq: screenShareSequence,
+        seq: eventSequencer.next(),
         ts: Int64(Date().timeIntervalSince1970 * 1000),
         active: active
     ))
     logLine("sidecar: screen share \(active ? "STARTED" : "STOPPED")")
 }
 
+hotkey.onFired = { id in
+    server.emit(.hotkeyFired(
+        seq: eventSequencer.next(),
+        ts: Int64(Date().timeIntervalSince1970 * 1000),
+        id: id
+    ))
+
+    guard id == "screenshot" else {
+        return
+    }
+
+    Task {
+        do {
+            guard #available(macOS 13.0, *) else {
+                return
+            }
+
+            let capture = ScreenCaptureService()
+            guard let image = try await capture.captureMainDisplay() else {
+                return
+            }
+
+            let ocr = try await OCRService.recognize(image: image)
+            server.emit(.ocrResult(
+                seq: eventSequencer.next(),
+                ts: Int64(Date().timeIntervalSince1970 * 1000),
+                text: ocr.text,
+                boxes: ocr.boxes
+            ))
+            logLine("sidecar: ocr \(ocr.text.count) chars")
+        } catch {
+            logLine("sidecar: ocr fail \(error)")
+        }
+    }
+}
+
 try server.start()
 logLine("sidecar listening on \(path)")
 shareDetector.start()
+do {
+    try hotkey.register(id: "screenshot", keyCode: 0x01, modifiers: UInt32(cmdKey | shiftKey))
+    logLine("sidecar hotkey registered: screenshot")
+} catch {
+    logLine("sidecar hotkey register failed: \(error)")
+}
 RunLoop.main.run()
 
 private final class CaptureBridge {
@@ -93,6 +137,18 @@ private final class CaptureBridge {
         queue.async { [server] in
             self.sequence += 1
             server.emit(.audioChunk(seq: self.sequence, ts: ts, pcmBase64: pcm.base64EncodedString()))
+        }
+    }
+}
+
+private final class EventSequencer {
+    private let queue = DispatchQueue(label: "ai-interview.sidecar-event-sequencer")
+    private var sequence = 0
+
+    func next() -> Int {
+        queue.sync {
+            sequence += 1
+            return sequence
         }
     }
 }
