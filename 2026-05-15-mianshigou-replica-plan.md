@@ -33,14 +33,12 @@
 
 ```
 ai-interview/
-├── .gitignore                   (已存在)
-├── package.json                 (pnpm workspace root)
+├── .gitignore                                  (已存在)
+├── 2026-05-15-mianshigou-replica-design.md     (spec)
+├── 2026-05-15-mianshigou-replica-plan.md       (本文件)
+├── package.json                                (pnpm workspace root)
 ├── pnpm-workspace.yaml
-├── docs/
-│   └── superpowers/
-│       ├── specs/2026-05-15-mianshigou-replica-design.md  (已存在)
-│       └── plans/2026-05-15-mianshigou-replica-plan.md    (本文件)
-├── sidecar/                     (Swift Package, macOS-only)
+├── sidecar/                                    (Swift Package, macOS-only)
 │   ├── Package.swift
 │   ├── Sources/
 │   │   ├── SidecarCore/         (库，可测)
@@ -4736,7 +4734,7 @@ git commit -m "feat(app): 生产期自动启动 + 守护 sidecar 子进程"
 
 ## 执行选项
 
-**Plan complete and saved to `docs/superpowers/plans/2026-05-15-mianshigou-replica-plan.md`. Two execution options:**
+**Plan complete and saved to `2026-05-15-mianshigou-replica-plan.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — 每个 task 派一个新 subagent 实现 + 我中间审；快速迭代
 
