@@ -2,7 +2,7 @@ import { app, BrowserWindow } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AudioBuffer } from "./audio/AudioBuffer";
-import { MockASRClient } from "./asr/MockASRClient";
+import { createASRClient } from "./asr/ASRFactory";
 import { TranscriptStore } from "./asr/TranscriptStore";
 import { IpcClient } from "./ipc/IpcClient";
 
@@ -11,13 +11,24 @@ let sidecar: IpcClient | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
 const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
-const asr = new MockASRClient({
-  script: [
-    { afterMs: 800, type: "partial", text: "你介绍一下" },
-    { afterMs: 1500, type: "partial", text: "你介绍一下自己" },
-    { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
-  ],
-});
+const asr =
+  process.env.ASR_PROVIDER === "huoshan"
+    ? createASRClient({
+        provider: "huoshan",
+        url: process.env.HUOSHAN_URL ?? "",
+        appId: process.env.HUOSHAN_APPID ?? "",
+        token: process.env.HUOSHAN_TOKEN ?? "",
+        sampleRate: 16_000,
+        language: "zh-CN",
+      })
+    : createASRClient({
+        provider: "mock",
+        script: [
+          { afterMs: 800, type: "partial", text: "你介绍一下" },
+          { afterMs: 1500, type: "partial", text: "你介绍一下自己" },
+          { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
+        ],
+      });
 
 function loadFloatingWindow(window: BrowserWindow) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
