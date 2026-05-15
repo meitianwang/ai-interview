@@ -15,12 +15,14 @@ const RANK: StatusLevel[] = ["green", "yellow", "orange", "red"];
 export class StatusStateMachine {
   private readonly active = new Set<string>();
 
-  report(event: string): void {
+  report(event: string): boolean {
+    const hadEvent = this.active.has(event);
     this.active.add(event);
+    return !hadEvent;
   }
 
-  clear(event: string): void {
-    this.active.delete(event);
+  clear(event: string): boolean {
+    return this.active.delete(event);
   }
 
   level(): StatusLevel {

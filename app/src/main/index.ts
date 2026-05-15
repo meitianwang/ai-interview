@@ -15,6 +15,7 @@ import type { LLMClient } from "./llm/LLMClient";
 import { LLMRouter } from "./llm/LLMRouter";
 import { MockLLMClient } from "./llm/MockLLMClient";
 import { OpenAIClient } from "./llm/OpenAIClient";
+import { Logger } from "./log/Logger";
 import { PromptBuilder } from "./prompt/PromptBuilder";
 import { SecretStore, type Settings } from "./secrets/SecretStore";
 import { StealthCoordinator } from "./stealth/StealthCoordinator";
@@ -27,6 +28,7 @@ let floatingWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let sidecar: IpcClient | null = null;
+let logger: Logger | null = null;
 const floatingEntry = "src/renderer/floating/index.html";
 const settingsEntry = "src/renderer/settings/index.html";
 const audioBuffer = new AudioBuffer();
@@ -195,6 +197,47 @@ async function loadStoredSettings() {
   }
 }
 
+function getLogger() {
+  if (!logger) {
+    logger = new Logger(join(app.getPath("userData"), "logs", "app.jsonl"));
+  }
+
+  return logger;
+}
+
+function logEvent(entry: Parameters<Logger["log"]>[0]) {
+  if (!app.isReady()) {
+    return;
+  }
+
+  try {
+    getLogger().log(entry);
+  } catch (error) {
+    console.error("[logger]", error);
+  }
+}
+
+function errorMeta(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return { message: error.message, name: error.name };
+  }
+  if (typeof error === "object" && error !== null) {
+    return { error };
+  }
+
+  return { error: String(error) };
+}
+
+function settingsMeta(settings: Settings): Record<string, unknown> {
+  return {
+    anthropicConfigured: settings.anthropicKey.length > 0,
+    huoshanAsrConfigured: settings.huoshanAppId.length > 0 && settings.huoshanToken.length > 0,
+    openaiConfigured: settings.openaiKey.length > 0,
+    profileConfigured: settings.resume.length > 0,
+    targetRoleConfigured: settings.jd.length > 0,
+  };
+}
+
 function assertSettingsSender(event: IpcMainInvokeEvent) {
   const url = event.senderFrame?.url ?? event.sender.getURL();
   if (!url.includes(settingsEntry)) {
@@ -203,12 +246,18 @@ function assertSettingsSender(event: IpcMainInvokeEvent) {
 }
 
 function reportStatus(event: string) {
-  appStatus.report(event);
+  const changed = appStatus.report(event);
+  if (changed) {
+    logEvent({ level: "warn", module: "status", type: event, meta: { level: appStatus.level() } });
+  }
   refreshTray();
 }
 
 function clearStatus(event: string) {
-  appStatus.clear(event);
+  const changed = appStatus.clear(event);
+  if (changed) {
+    logEvent({ level: "info", module: "status", type: `${event}.cleared`, meta: { level: appStatus.level() } });
+  }
   refreshTray();
 }
 
@@ -316,6 +365,7 @@ function connectSidecar() {
 
   client.on("connect", () => {
     clearStatus("ipc.disconnected");
+    logEvent({ level: "info", module: "ipc", type: "connected" });
     client.send({
       v: 1,
       t: "capture.start",
@@ -357,10 +407,12 @@ function connectSidecar() {
   });
   client.on("error", (error) => {
     reportStatus("ipc.disconnected");
+    logEvent({ level: "error", module: "ipc", type: "error", meta: errorMeta(error) });
     console.error("[sidecar]", error);
   });
   client.on("disconnect", () => {
     reportStatus("ipc.disconnected");
+    logEvent({ level: "warn", module: "ipc", type: "disconnected" });
     sidecar = null;
     setTimeout(connectSidecar, 1000);
   });
@@ -372,11 +424,19 @@ function connectSidecar() {
 asr.on("connected", () => {
   clearStatus("asr.reconnecting");
   clearStatus("asr.failed");
+  logEvent({ level: "info", module: "asr", type: "connected" });
 });
-asr.on("reconnecting", () => reportStatus("asr.reconnecting"));
-asr.on("failed", () => reportStatus("asr.failed"));
+asr.on("reconnecting", (retry) => {
+  reportStatus("asr.reconnecting");
+  logEvent({ level: "warn", module: "asr", type: "reconnecting", meta: { retry } });
+});
+asr.on("failed", () => {
+  reportStatus("asr.failed");
+  logEvent({ level: "error", module: "asr", type: "failed" });
+});
 asr.on("error", (error) => {
   reportStatus("asr.failed");
+  logEvent({ level: "error", module: "asr", type: "error", meta: errorMeta(error) });
   console.error("[asr]", error);
 });
 asr.on("transcript", (event) => {
@@ -393,22 +453,31 @@ asr.connect().catch((error) => {
   reportStatus("asr.failed");
   console.error("[asr]", error);
 });
-llmRouter.on("fallback", () => reportStatus("llm.fallback"));
-llmRouter.on("client-error", () => reportStatus("llm.failed"));
+llmRouter.on("fallback", (event) => {
+  reportStatus("llm.fallback");
+  logEvent({ level: "warn", module: "llm", type: "fallback", meta: event });
+});
+llmRouter.on("client-error", (event) => {
+  reportStatus("llm.failed");
+  logEvent({ level: "error", module: "llm", type: "client-error", meta: event as Record<string, unknown> });
+});
 triggerer.on("start", () => {
   clearStatus("llm.fallback");
   clearStatus("llm.failed");
+  logEvent({ level: "info", module: "llm", type: "answer-start" });
   sendToFloating("answer-start", null);
 });
 triggerer.on("token", (text) => sendToFloating("answer-token", text));
 triggerer.on("done", () => {
   clearStatus("llm.failed");
+  logEvent({ level: "info", module: "llm", type: "answer-done" });
   sendToFloating("answer-done", null);
 });
 ipcMain.handle("settings:load", async (event) => {
   assertSettingsSender(event);
   settingsCache = await getSecretStore().loadAll();
   applySettingsToRuntime(settingsCache);
+  logEvent({ level: "info", module: "settings", type: "load", meta: settingsMeta(settingsCache) });
   return { ...settingsCache };
 });
 ipcMain.handle("settings:save", async (event, payload: unknown) => {
@@ -416,6 +485,7 @@ ipcMain.handle("settings:save", async (event, payload: unknown) => {
   const settings = sanitizeSettings(payload);
   settingsCache = await getSecretStore().saveAll(settings);
   applySettingsToRuntime(settingsCache);
+  logEvent({ level: "info", module: "settings", type: "save", meta: settingsMeta(settingsCache) });
   return { ...settingsCache };
 });
 
@@ -481,6 +551,8 @@ app.on("will-quit", () => {
   triggerer.abort();
   tray?.destroy();
   tray = null;
+  void logger?.close().catch((error) => console.error("[logger]", error));
+  logger = null;
 });
 
 function createLLMClients(settings: Pick<Settings, "anthropicKey" | "openaiKey">): {
