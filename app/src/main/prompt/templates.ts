@@ -1,3 +1,5 @@
+import { formatProblemStatement } from "../ocr/ProblemStatementParser";
+
 export const SYSTEM_TECHNICAL =
   "你是候选人的实时面试助手。请在 3 个 bullet 内给出技术题的回答大纲，每个 bullet 不超过 25 字。需要写代码时另起代码块。先大纲、必要时再展开。语言：中文。";
 
@@ -21,7 +23,8 @@ export function buildUserPrompt(context: {
           .map((item) => `Q: ${item.q}\nA: ${item.a}`)
           .join("\n\n")}\n\n`
       : "";
-  const ocr = context.ocr ? `屏幕上的题面：\n${context.ocr}\n\n` : "";
+  const screenProblem = context.ocr ? formatProblemStatement(context.ocr) : "";
+  const ocr = screenProblem ? `${screenProblem}\n\n` : "";
 
   return `候选人简历：
 ${context.resume || "（暂无）"}

@@ -38,4 +38,23 @@ describe("PromptBuilder", () => {
     expect(prompt.user).toContain("屏幕上的题面");
     expect(prompt.user).toContain("上一题");
   });
+
+  it("structures known coding-site OCR before injecting it", () => {
+    const prompt = promptBuilder.build({
+      questionType: "technical",
+      context: {
+        ...context,
+        ocr: `LeetCode
+206. 反转链表
+给你单链表的头节点 head ，请你反转链表。
+示例 1：
+输入：head = [1,2,3]
+输出：[3,2,1]`,
+      },
+    });
+
+    expect(prompt.user).toContain("屏幕上的题面（leetcode");
+    expect(prompt.user).toContain("标题：反转链表");
+    expect(prompt.user).toContain("示例：");
+  });
 });
