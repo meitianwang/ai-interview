@@ -9,7 +9,7 @@ export class MockLLMClient extends EventEmitter implements LLMClient {
     super();
   }
 
-  async stream(_prompt: { system: string; user: string }, _options: { timeoutMs: number }): Promise<void> {
+  async stream(): Promise<void> {
     this.abort();
     const chunks = this.text.match(/.{1,4}/g) ?? [this.text];
     chunks.forEach((chunk, index) => {

@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
+import type { LLMClient } from "../../src/main/llm/LLMClient";
 import { LLMRouter } from "../../src/main/llm/LLMRouter";
 
-class FakeClient extends EventEmitter {
+class FakeClient extends EventEmitter implements LLMClient {
   streamCalls = 0;
 
   constructor(
@@ -32,8 +33,8 @@ class FakeClient extends EventEmitter {
 
 describe("LLMRouter", () => {
   it("uses primary when ok", async () => {
-    const primary = new FakeClient("primary", "ok") as any;
-    const fallback = new FakeClient("fallback", "ok") as any;
+    const primary = new FakeClient("primary", "ok");
+    const fallback = new FakeClient("fallback", "ok");
     const router = new LLMRouter({ primary, fallback }, { timeoutMs: 100 });
     const tokens: string[] = [];
     router.on("token", (token) => tokens.push(token.text));
@@ -44,8 +45,8 @@ describe("LLMRouter", () => {
   });
 
   it("falls back on primary error", async () => {
-    const primary = new FakeClient("primary", "fail") as any;
-    const fallback = new FakeClient("fallback", "ok") as any;
+    const primary = new FakeClient("primary", "fail");
+    const fallback = new FakeClient("fallback", "ok");
     const router = new LLMRouter({ primary, fallback }, { timeoutMs: 100 });
     const events: string[] = [];
     router.on("token", () => events.push("token"));
@@ -58,8 +59,8 @@ describe("LLMRouter", () => {
   });
 
   it("falls back when primary times out", async () => {
-    const primary = new FakeClient("primary", "timeout") as any;
-    const fallback = new FakeClient("fallback", "ok") as any;
+    const primary = new FakeClient("primary", "timeout");
+    const fallback = new FakeClient("fallback", "ok");
     const router = new LLMRouter({ primary, fallback }, { timeoutMs: 20 });
     const events: string[] = [];
     router.on("fallback", () => events.push("fallback"));
@@ -71,8 +72,8 @@ describe("LLMRouter", () => {
   });
 
   it("aborts an active route without falling back", async () => {
-    const primary = new FakeClient("primary", "timeout") as any;
-    const fallback = new FakeClient("fallback", "ok") as any;
+    const primary = new FakeClient("primary", "timeout");
+    const fallback = new FakeClient("fallback", "ok");
     const router = new LLMRouter({ primary, fallback }, { timeoutMs: 1000 });
     const events: string[] = [];
     router.on("fallback", () => events.push("fallback"));
@@ -86,9 +87,9 @@ describe("LLMRouter", () => {
   });
 
   it("uses updated clients for later routes", async () => {
-    const oldPrimary = new FakeClient("old-primary", "ok") as any;
-    const newPrimary = new FakeClient("new-primary", "ok") as any;
-    const fallback = new FakeClient("fallback", "ok") as any;
+    const oldPrimary = new FakeClient("old-primary", "ok");
+    const newPrimary = new FakeClient("new-primary", "ok");
+    const fallback = new FakeClient("fallback", "ok");
     const router = new LLMRouter({ primary: oldPrimary, fallback }, { timeoutMs: 100 });
 
     router.updateClients({ primary: newPrimary, fallback });

@@ -143,7 +143,11 @@ private final class CaptureBridge {
 
     func start() {
         queue.async { [captureService] in
-            try? captureService.start()
+            do {
+                try captureService.start()
+            } catch {
+                logLine("sidecar capture start failed: \(error)")
+            }
         }
     }
 
