@@ -4,6 +4,7 @@
 node_modules/
 dist/
 dist-electron/
+app/resources/sidecar
 
 # Swift
 sidecar/.build/
