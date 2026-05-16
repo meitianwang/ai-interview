@@ -1,155 +1,104 @@
-import { spawn, type SpawnOptionsWithoutStdio } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { getClaudeAccessToken, getClaudeOAuthBetaHeader, type ClaudeAccessToken } from "./ClaudeOAuth";
 import type { LLMClient } from "./LLMClient";
+import { readSSE } from "./SSE";
 
-const MAX_STDERR_CHARS = 8 * 1024;
-const MAX_STDOUT_BUFFER_CHARS = 64 * 1024;
+const CLAUDE_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages";
+const MAX_ERROR_BODY_CHARS = 8 * 1024;
 
-interface SpawnedProcess extends EventEmitter {
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-  stdin: {
-    write: (chunk: string) => void;
-    end: () => void;
-  };
-  kill: (signal?: NodeJS.Signals) => boolean;
-}
-
-type SpawnClaude = (command: string, args: string[], options: SpawnOptionsWithoutStdio) => SpawnedProcess;
+type FetchLike = typeof fetch;
 
 export class ClaudeSubscriptionClient extends EventEmitter implements LLMClient {
   name = "claude-subscription";
-  private child: SpawnedProcess | null = null;
+  private aborter: AbortController | null = null;
 
   constructor(
     private readonly config: {
-      command?: string;
-      cwd?: string;
+      endpoint?: string;
+      fetchImpl?: FetchLike;
+      getToken?: (opts?: { forceRefresh?: boolean }) => Promise<ClaudeAccessToken>;
       model: string;
-      spawnImpl?: SpawnClaude;
     },
   ) {
     super();
   }
 
   async stream(prompt: { system: string; user: string }, options: { timeoutMs: number }): Promise<void> {
-    this.abort();
-    const spawnImpl = this.config.spawnImpl ?? ((command, args, spawnOptions) => spawn(command, args, spawnOptions) as unknown as SpawnedProcess);
-    const child = spawnImpl(this.config.command ?? "claude", buildClaudeArgs(this.config.model), {
-      cwd: this.config.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.child = child;
+    const aborter = new AbortController();
+    this.aborter = aborter;
+    const timer = setTimeout(() => aborter.abort(), options.timeoutMs);
 
-    let settled = false;
-    let stdoutBuffer = "";
-    let stderrTail = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-    }, options.timeoutMs);
-
-    const settle = (ok: boolean, error?: Error) => {
-      if (settled) {
+    try {
+      const response = await this.request(prompt, aborter.signal);
+      if (response.status === 401 && !this.config.getToken) {
+        const retry = await this.request(prompt, aborter.signal, true);
+        await this.consumeResponse(retry);
         return;
       }
 
-      settled = true;
+      await this.consumeResponse(response);
+    } catch (error) {
+      this.emit("error", error);
+    } finally {
       clearTimeout(timer);
-      if (this.child === child) {
-        this.child = null;
-      }
-      if (ok) {
-        this.emit("done");
-      } else {
-        this.emit("error", error ?? new Error("Claude subscription request failed"));
-      }
-    };
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdoutBuffer = limitString(`${stdoutBuffer}${chunk.toString()}`, MAX_STDOUT_BUFFER_CHARS);
-      let newlineIndex = stdoutBuffer.indexOf("\n");
-      while (newlineIndex !== -1) {
-        const line = stdoutBuffer.slice(0, newlineIndex);
-        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-        handleClaudeJsonLine(line, (text) => this.emit("token", { text }));
-        newlineIndex = stdoutBuffer.indexOf("\n");
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderrTail = limitString(`${stderrTail}${chunk.toString()}`, MAX_STDERR_CHARS);
-    });
-    child.once("error", (error) => settle(false, error instanceof Error ? error : new Error(String(error))));
-    child.once("close", (code, signal) => {
-      if (stdoutBuffer.trim()) {
-        handleClaudeJsonLine(stdoutBuffer, (text) => this.emit("token", { text }));
-      }
-      if (code === 0) {
-        settle(true);
-        return;
-      }
-
-      const reason = stderrTail.trim() || `claude exited with code ${code ?? "unknown"}${signal ? ` signal ${signal}` : ""}`;
-      settle(false, new Error(reason));
-    });
-
-    child.stdin.write(formatClaudePrompt(prompt));
-    child.stdin.end();
+    }
   }
 
   abort(): void {
-    this.child?.kill("SIGTERM");
-    this.child = null;
-  }
-}
-
-export function isClaudeCliAvailable(command = process.env.CLAUDE_BIN ?? "claude", pathValue = process.env.PATH ?? ""): boolean {
-  if (command.includes("/") || command.includes("\\")) {
-    return existsSync(command);
+    this.aborter?.abort();
   }
 
-  const paths = [...pathValue.split(delimiter), "/opt/homebrew/bin", "/usr/local/bin"].filter(Boolean);
-  return paths.some((dir) => existsSync(join(dir, command)));
-}
-
-function buildClaudeArgs(model: string): string[] {
-  return [
-    "-p",
-    "--verbose",
-    "--output-format",
-    "stream-json",
-    "--input-format",
-    "text",
-    "--include-partial-messages",
-    "--no-session-persistence",
-    "--model",
-    model,
-    "--tools",
-    "",
-    "--setting-sources",
-    "local",
-    "--disable-slash-commands",
-  ];
-}
-
-function formatClaudePrompt(prompt: { system: string; user: string }): string {
-  return `<system>\n${prompt.system}\n</system>\n\n${prompt.user}`;
-}
-
-function handleClaudeJsonLine(line: string, onToken: (text: string) => void): void {
-  if (!line.trim()) {
-    return;
+  private async request(prompt: { system: string; user: string }, signal: AbortSignal, forceRefresh = false): Promise<Response> {
+    const fetchImpl = this.config.fetchImpl ?? fetch;
+    const token = await (this.config.getToken ?? getClaudeAccessToken)({ forceRefresh });
+    return await fetchImpl(this.config.endpoint ?? CLAUDE_MESSAGES_ENDPOINT, {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${token.accessToken}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": getClaudeOAuthBetaHeader(),
+        "content-type": "application/json",
+        accept: "text/event-stream",
+        "x-app": "cli",
+        "User-Agent": "claude-cli/2.1.143 (external, ai-interview)",
+        "X-Claude-Code-Session-Id": randomUUID(),
+        "x-client-request-id": randomUUID(),
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        max_tokens: 800,
+        stream: true,
+        system: prompt.system,
+        messages: [{ role: "user", content: prompt.user }],
+      }),
+    });
   }
 
-  try {
-    const parsed = JSON.parse(line);
-    const event = parsed?.type === "stream_event" ? parsed.event : parsed;
-    if (event?.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
-      onToken(event.delta.text);
+  private async consumeResponse(response: Response): Promise<void> {
+    if (!response.ok || !response.body) {
+      const text = limitString(await response.text().catch(() => ""), MAX_ERROR_BODY_CHARS);
+      this.emit("error", new Error(`claude subscription ${response.status}${text ? ` - ${text}` : ""}`));
+      return;
     }
-  } catch {
-    // Ignore hook/status lines that are not JSON payloads.
+
+    let completed = false;
+    await readSSE(response.body, (event) => {
+      if (event.type === "content_block_delta" && event.delta?.text) {
+        this.emit("token", { text: event.delta.text });
+      }
+      if (event.type === "error") {
+        throw new Error(event.error?.message ?? "Claude subscription stream error");
+      }
+      if (event.type === "message_stop") {
+        completed = true;
+        this.emit("done");
+      }
+    });
+    if (!completed) {
+      this.emit("done");
+    }
   }
 }
 

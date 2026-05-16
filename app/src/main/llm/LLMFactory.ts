@@ -1,6 +1,7 @@
 import type { Settings } from "../secrets/SecretStore";
 import { ClaudeClient } from "./ClaudeClient";
-import { ClaudeSubscriptionClient, isClaudeCliAvailable } from "./ClaudeSubscriptionClient";
+import { hasClaudeOAuthCredentials } from "./ClaudeOAuth";
+import { ClaudeSubscriptionClient } from "./ClaudeSubscriptionClient";
 import { hasCodexCliAuth } from "./CodexAuth";
 import { CodexSubscriptionClient } from "./CodexSubscriptionClient";
 import type { LLMClient } from "./LLMClient";
@@ -17,9 +18,7 @@ export function createLLMClients(settings: Pick<Settings, "anthropicKey" | "llmP
   const codexSubscription = () => new CodexSubscriptionClient({ model: process.env.CODEX_MODEL ?? "gpt-5.4" });
   const claudeSubscription = () =>
     new ClaudeSubscriptionClient({
-      command: process.env.CLAUDE_BIN,
-      cwd: process.cwd(),
-      model: process.env.CLAUDE_SUBSCRIPTION_MODEL ?? process.env.ANTHROPIC_MODEL ?? "sonnet",
+      model: process.env.CLAUDE_SUBSCRIPTION_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6",
     });
 
   if (provider === "api") {
@@ -29,7 +28,7 @@ export function createLLMClients(settings: Pick<Settings, "anthropicKey" | "llmP
   if (provider === "codex-subscription") {
     return {
       primary: codexSubscription(),
-      fallback: firstClient(anthropicApi, openaiApi, isClaudeCliAvailable() ? claudeSubscription() : null) ?? new MockLLMClient(),
+      fallback: firstClient(anthropicApi, openaiApi, hasClaudeOAuthCredentials() ? claudeSubscription() : null) ?? new MockLLMClient(),
     };
   }
 
@@ -80,11 +79,11 @@ function autoClients(opts: {
   if (hasCodexCliAuth()) {
     return {
       primary: opts.codexSubscription(),
-      fallback: isClaudeCliAvailable() ? opts.claudeSubscription() : new MockLLMClient("备用答案：请登录 Claude Code。"),
+      fallback: hasClaudeOAuthCredentials() ? opts.claudeSubscription() : new MockLLMClient("备用答案：请登录 Claude Code。"),
     };
   }
 
-  if (isClaudeCliAvailable()) {
+  if (hasClaudeOAuthCredentials()) {
     return {
       primary: opts.claudeSubscription(),
       fallback: new MockLLMClient("备用答案：请登录 Codex 或配置 API key。"),
