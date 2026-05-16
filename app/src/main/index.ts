@@ -20,6 +20,7 @@ import { MockLLMClient } from "./llm/MockLLMClient";
 import { OpenAIClient } from "./llm/OpenAIClient";
 import { Logger } from "./log/Logger";
 import { PromptBuilder } from "./prompt/PromptBuilder";
+import { PromptCache } from "./prompt/PromptCache";
 import { SecretStore, type Settings } from "./secrets/SecretStore";
 import { StealthCoordinator } from "./stealth/StealthCoordinator";
 import { StatusStateMachine, type StatusLevel } from "./status/StatusStateMachine";
@@ -41,6 +42,7 @@ const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
 const contextManager = new ContextManager({ transcriptStore });
 const promptBuilder = new PromptBuilder();
+const promptCache = new PromptCache(contextManager, promptBuilder);
 const classifier = new QuestionClassifier();
 const stealth = new StealthCoordinator();
 const appStatus = new StatusStateMachine();
@@ -113,11 +115,12 @@ function fireAnswer() {
   }
 
   answerInFlight = true;
-  const context = contextManager.buildContext();
-  classifyQuestion(context)
-    .then((questionType) => triggerer.fire(questionType))
+  const promptSnapshot = promptCache.snapshot();
+  classifyQuestion(promptSnapshot.context)
+    .then((questionType) => triggerer.fire(questionType, promptCache.pick(promptSnapshot, questionType)))
     .catch((error) => console.error("[trigger]", error))
     .finally(() => {
+      promptCache.refresh();
       answerInFlight = false;
     });
 }
@@ -182,6 +185,7 @@ function applySettingsToRuntime(settings: Settings) {
   contextManager.updateResume(settings.resume);
   contextManager.updateJD(settings.jd);
   llmRouter.updateClients(createLLMClients(settings));
+  promptCache.refresh();
 }
 
 async function classifyQuestion(context: { transcript: string; ocr: string }) {
@@ -485,6 +489,7 @@ function connectSidecar() {
 
     if (event.t === "ocr.result") {
       contextManager.updateOCR(event.p.text);
+      promptCache.refresh();
       sendToFloating("ocr", event.p.text);
     }
 
@@ -531,6 +536,7 @@ asr.on("transcript", (event) => {
   } else {
     transcriptStore.applyFinal(event.text, event.ts);
   }
+  promptCache.refresh();
   triggerLogic.updateTranscriptTail(transcriptStore.tail(40));
   sendToFloating("transcript", transcriptStore.snapshot());
 });

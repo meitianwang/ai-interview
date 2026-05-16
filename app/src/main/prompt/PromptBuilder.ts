@@ -8,6 +8,12 @@ export interface Prompt {
   user: string;
 }
 
+export interface PreparedPrompt {
+  context: Context;
+  prompt: Prompt;
+  builtAt: number;
+}
+
 export class PromptBuilder {
   build(input: { questionType: QuestionType; context: Context }): Prompt {
     const system =

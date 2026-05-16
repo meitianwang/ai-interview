@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ContextManager } from "../context/ContextManager";
 import type { LLMRouter } from "../llm/LLMRouter";
-import type { PromptBuilder, QuestionType } from "../prompt/PromptBuilder";
+import type { PreparedPrompt, PromptBuilder, QuestionType } from "../prompt/PromptBuilder";
 
 export class Triggerer extends EventEmitter {
   constructor(
@@ -12,9 +12,9 @@ export class Triggerer extends EventEmitter {
     super();
   }
 
-  async fire(questionType: QuestionType = "general"): Promise<void> {
-    const context = this.contextManager.buildContext({ transcriptTailSeconds: 30 });
-    const prompt = this.promptBuilder.build({ questionType, context });
+  async fire(questionType: QuestionType = "general", preparedPrompt?: PreparedPrompt): Promise<void> {
+    const context = preparedPrompt?.context ?? this.contextManager.buildContext({ transcriptTailSeconds: 30 });
+    const prompt = preparedPrompt?.prompt ?? this.promptBuilder.build({ questionType, context });
     let collected = "";
     let completed = false;
     const cleanup = () => {
@@ -32,7 +32,7 @@ export class Triggerer extends EventEmitter {
       this.contextManager.appendHistory(context.transcript, collected);
     };
 
-    this.emit("start", { questionType });
+    this.emit("start", { promptBuiltAt: preparedPrompt?.builtAt, promptPrebuilt: Boolean(preparedPrompt), questionType });
     this.router.on("token", onToken);
     this.router.once("done", onDone);
     try {
