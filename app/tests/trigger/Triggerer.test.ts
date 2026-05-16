@@ -4,10 +4,26 @@ import { TranscriptStore } from "../../src/main/asr/TranscriptStore";
 import { ContextManager } from "../../src/main/context/ContextManager";
 import type { LLMClient } from "../../src/main/llm/LLMClient";
 import { LLMRouter } from "../../src/main/llm/LLMRouter";
-import { MockLLMClient } from "../../src/main/llm/MockLLMClient";
 import type { Prompt } from "../../src/main/prompt/PromptBuilder";
 import { PromptBuilder } from "../../src/main/prompt/PromptBuilder";
 import { Triggerer } from "../../src/main/trigger/Triggerer";
+
+class StreamingLLM extends EventEmitter implements LLMClient {
+  name = "streaming";
+
+  constructor(private readonly text: string) {
+    super();
+  }
+
+  async stream(): Promise<void> {
+    this.emit("token", { text: this.text });
+    this.emit("done");
+  }
+
+  abort(): void {
+    this.emit("aborted");
+  }
+}
 
 class CapturingLLM extends EventEmitter implements LLMClient {
   name = "capturing";
@@ -31,8 +47,8 @@ describe("Triggerer", () => {
     const contextManager = new ContextManager({ transcriptStore });
     const router = new LLMRouter(
       {
-        primary: new MockLLMClient("答案"),
-        fallback: new MockLLMClient("备用"),
+        primary: new StreamingLLM("答案"),
+        fallback: new StreamingLLM("备用"),
       },
       { timeoutMs: 200 },
     );
@@ -56,7 +72,7 @@ describe("Triggerer", () => {
     const router = new LLMRouter(
       {
         primary,
-        fallback: new MockLLMClient("备用"),
+        fallback: new StreamingLLM("备用"),
       },
       { timeoutMs: 200 },
     );
@@ -79,5 +95,20 @@ describe("Triggerer", () => {
 
     expect(primary.prompts[0]).toEqual({ system: "cached system", user: "cached user" });
     expect(contextManager.buildContext().history[0]).toEqual({ q: "缓存问题", a: "缓存答案" });
+  });
+
+  it("does not append history when no real LLM is configured", async () => {
+    const transcriptStore = new TranscriptStore();
+    transcriptStore.applyFinal("真实问题", 100);
+    const contextManager = new ContextManager({ transcriptStore });
+    const router = new LLMRouter({ primary: null, fallback: null }, { timeoutMs: 200 });
+    const triggerer = new Triggerer(contextManager, new PromptBuilder(), router);
+    const events: string[] = [];
+    triggerer.on("done", () => events.push("done"));
+
+    await triggerer.fire("general");
+
+    expect(events).toEqual(["done"]);
+    expect(contextManager.buildContext().history).toEqual([]);
   });
 });

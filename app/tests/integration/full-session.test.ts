@@ -30,7 +30,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("full mock session", () => {
+describe("full session", () => {
   it("classifies a behavioral question and produces an answer", async () => {
     const transcriptStore = new TranscriptStore();
     transcriptStore.applyFinal("你介绍一下自己吧？", Date.now());

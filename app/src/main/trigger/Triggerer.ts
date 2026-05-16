@@ -29,7 +29,9 @@ export class Triggerer extends EventEmitter {
       completed = true;
       cleanup();
       this.emit("done", collected);
-      this.contextManager.appendHistory(context.transcript, collected);
+      if (collected.length > 0) {
+        this.contextManager.appendHistory(context.transcript, collected);
+      }
     };
 
     this.emit("start", { promptBuiltAt: preparedPrompt?.builtAt, promptPrebuilt: Boolean(preparedPrompt), questionType });

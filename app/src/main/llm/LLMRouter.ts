@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { LLMClient, LLMTokenEvent } from "./LLMClient";
+import type { LLMClient, LLMClientSet, LLMTokenEvent } from "./LLMClient";
 
 export class LLMRouter extends EventEmitter {
   private readonly timeoutMs: number;
@@ -7,27 +7,41 @@ export class LLMRouter extends EventEmitter {
   private aborted = false;
 
   constructor(
-    private clients: { primary: LLMClient; fallback: LLMClient },
+    private clients: LLMClientSet,
     options: { timeoutMs?: number } = {},
   ) {
     super();
     this.timeoutMs = options.timeoutMs ?? 8000;
   }
 
-  updateClients(clients: { primary: LLMClient; fallback: LLMClient }): void {
+  updateClients(clients: LLMClientSet): void {
     this.abort();
     this.clients = clients;
   }
 
   async route(prompt: { system: string; user: string }): Promise<void> {
     this.aborted = false;
-    const primarySucceeded = await this.tryClient(this.clients.primary, prompt);
+    const primary = this.clients.primary;
+    if (!primary) {
+      this.emit("client-error", { client: "none", error: new Error("没有可用的真实 LLM 配置") });
+      this.emit("done");
+      return;
+    }
+
+    const primarySucceeded = await this.tryClient(primary, prompt);
     if (this.aborted) {
       return;
     }
     if (!primarySucceeded) {
-      this.emit("fallback", { from: this.clients.primary.name, to: this.clients.fallback.name });
-      await this.tryClient(this.clients.fallback, prompt);
+      const fallback = this.clients.fallback;
+      if (!fallback) {
+        this.emit("client-error", { client: primary.name, error: new Error("主模型失败，且没有可用的真实备用 LLM") });
+        this.emit("done");
+        return;
+      }
+
+      this.emit("fallback", { from: primary.name, to: fallback.name });
+      await this.tryClient(fallback, prompt);
       if (this.aborted) {
         return;
       }
@@ -37,8 +51,8 @@ export class LLMRouter extends EventEmitter {
 
   abort(): void {
     this.aborted = true;
-    this.clients.primary.abort();
-    this.clients.fallback.abort();
+    this.clients.primary?.abort();
+    this.clients.fallback?.abort();
     this.abortActiveClient?.();
     this.abortActiveClient = null;
   }

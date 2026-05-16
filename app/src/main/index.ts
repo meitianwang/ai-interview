@@ -35,6 +35,7 @@ let logger: Logger | null = null;
 let isQuitting = false;
 const floatingEntry = "src/renderer/floating/index.html";
 const settingsEntry = "src/renderer/settings/index.html";
+const defaultHuoshanASRUrl = "wss://openspeech.bytedance.com/api/v2/asr";
 const audioBuffer = new AudioBuffer();
 const transcriptStore = new TranscriptStore();
 const contextManager = new ContextManager({ transcriptStore });
@@ -53,30 +54,14 @@ const defaultSettings: Settings = {
   huoshanToken: "",
 };
 let settingsCache: Settings = { ...defaultSettings };
-const asrConfig: ASRConfig =
-  process.env.ASR_PROVIDER === "huoshan"
-    ? {
-        provider: "huoshan",
-        url: process.env.HUOSHAN_URL ?? "",
-        appId: process.env.HUOSHAN_APPID ?? "",
-        token: process.env.HUOSHAN_TOKEN ?? "",
-        sampleRate: 16_000,
-        language: "zh-CN",
-      }
-    : {
-        provider: "mock",
-        script: [
-          { afterMs: 800, type: "partial", text: "你介绍一下" },
-          { afterMs: 1500, type: "partial", text: "你介绍一下自己" },
-          { afterMs: 2200, type: "final", text: "你介绍一下自己吧。" },
-        ],
-      };
-const asr = new AutoReconnectASR(() => createASRClient(asrConfig), { delayMs: 1500, maxRetries: 5 });
+const asr = new AutoReconnectASR(() => createASRClient(resolveASRConfig(settingsCache)), { delayMs: 1500, maxRetries: 5 });
 const llmRouter = new LLMRouter(createLLMClients(settingsCache), { timeoutMs: 8000 });
 const triggerer = new Triggerer(contextManager, promptBuilder, llmRouter);
 const vad = new EnergyVADProcessor({ threshold: 0.02 });
 const triggerLogic = new TriggerLogic({ silenceMs: 1500, onTrigger: fireAnswer });
 let answerInFlight = false;
+let asrStarted = false;
+let activeASRSignature: string | null = null;
 let triggerTickTimer: NodeJS.Timeout | null = null;
 
 let secretStore: SecretStore | null = null;
@@ -191,6 +176,65 @@ function applySettingsToRuntime(settings: Settings) {
   promptCache.refresh();
 }
 
+function resolveASRConfig(settings: Pick<Settings, "huoshanAppId" | "huoshanToken">): ASRConfig {
+  const appId = settings.huoshanAppId || process.env.HUOSHAN_APPID || "";
+  const token = settings.huoshanToken || process.env.HUOSHAN_TOKEN || "";
+  if (!appId || !token) {
+    throw new Error("火山 ASR 未配置 App ID/Token，实时转写已停用");
+  }
+
+  return {
+    provider: "huoshan",
+    url: process.env.HUOSHAN_URL || defaultHuoshanASRUrl,
+    appId,
+    token,
+    sampleRate: 16_000,
+    language: "zh-CN",
+  };
+}
+
+function asrConfigSignature(config: ASRConfig): string {
+  return JSON.stringify({ appId: config.appId, provider: config.provider, token: config.token, url: config.url });
+}
+
+async function reconcileASR(reason: string): Promise<void> {
+  let config: ASRConfig;
+  try {
+    config = resolveASRConfig(settingsCache);
+  } catch (error) {
+    if (asrStarted) {
+      asr.disconnect();
+    }
+    asrStarted = false;
+    activeASRSignature = null;
+    reportStatus("asr.failed");
+    logEvent({ level: "error", module: "asr", type: "missing-config", meta: { reason, ...errorMeta(error) } });
+    return;
+  }
+
+  const signature = asrConfigSignature(config);
+  if (asrStarted && activeASRSignature === signature) {
+    return;
+  }
+
+  if (asrStarted) {
+    asr.disconnect();
+  }
+  asrStarted = true;
+  activeASRSignature = signature;
+
+  try {
+    await asr.connect();
+    logEvent({ level: "info", module: "asr", type: "started", meta: { reason, url: config.url, appId: config.appId } });
+  } catch (error) {
+    asrStarted = false;
+    activeASRSignature = null;
+    reportStatus("asr.failed");
+    logEvent({ level: "error", module: "asr", type: "connect-failed", meta: { reason, ...errorMeta(error) } });
+    console.error("[asr]", error);
+  }
+}
+
 async function classifyQuestion(context: { transcript: string; ocr: string }) {
   const signal = classifier.classifyWithSignal(context);
   const fallbackClient = createClassifierLLMClient(settingsCache);
@@ -258,12 +302,16 @@ function errorMeta(error: unknown): Record<string, unknown> {
 function settingsMeta(settings: Settings): Record<string, unknown> {
   return {
     anthropicConfigured: settings.anthropicKey.length > 0,
-    huoshanAsrConfigured: settings.huoshanAppId.length > 0 && settings.huoshanToken.length > 0,
+    huoshanAsrConfigured: hasHuoshanASRConfig(settings),
     llmProvider: settings.llmProvider,
     openaiConfigured: settings.openaiKey.length > 0,
     profileConfigured: settings.resume.length > 0,
     targetRoleConfigured: settings.jd.length > 0,
   };
+}
+
+function hasHuoshanASRConfig(settings: Pick<Settings, "huoshanAppId" | "huoshanToken">): boolean {
+  return Boolean((settings.huoshanAppId || process.env.HUOSHAN_APPID) && (settings.huoshanToken || process.env.HUOSHAN_TOKEN));
 }
 
 function assertSettingsSender(event: IpcMainInvokeEvent) {
@@ -516,6 +564,8 @@ asr.on("reconnecting", (retry) => {
   logEvent({ level: "warn", module: "asr", type: "reconnecting", meta: { retry } });
 });
 asr.on("failed", () => {
+  asrStarted = false;
+  activeASRSignature = null;
   reportStatus("asr.failed");
   logEvent({ level: "error", module: "asr", type: "failed" });
 });
@@ -535,10 +585,6 @@ asr.on("transcript", (event) => {
   triggerLogic.updateTranscriptTail(transcriptStore.tail(40));
   sendToFloating("transcript", transcriptStore.snapshot());
 });
-asr.connect().catch((error) => {
-  reportStatus("asr.failed");
-  console.error("[asr]", error);
-});
 llmRouter.on("fallback", (event) => {
   reportStatus("llm.fallback");
   logEvent({ level: "warn", module: "llm", type: "fallback", meta: event });
@@ -554,9 +600,11 @@ triggerer.on("start", () => {
   sendToFloating("answer-start", null);
 });
 triggerer.on("token", (text) => sendToFloating("answer-token", text));
-triggerer.on("done", () => {
-  clearStatus("llm.failed");
-  logEvent({ level: "info", module: "llm", type: "answer-done" });
+triggerer.on("done", (answer: string) => {
+  if (answer.length > 0) {
+    clearStatus("llm.failed");
+  }
+  logEvent({ level: "info", module: "llm", type: "answer-done", meta: { hasAnswer: answer.length > 0 } });
   sendToFloating("answer-done", null);
 });
 ipcMain.handle("settings:load", async (event) => {
@@ -571,17 +619,19 @@ ipcMain.handle("settings:save", async (event, payload: unknown) => {
   const settings = sanitizeSettings(payload);
   settingsCache = await getSecretStore().saveAll(settings);
   applySettingsToRuntime(settingsCache);
+  void reconcileASR("settings-save");
   logEvent({ level: "info", module: "settings", type: "save", meta: settingsMeta(settingsCache) });
   return { ...settingsCache };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === "darwin") {
     app.setActivationPolicy("accessory");
     app.dock?.hide();
   }
-  void loadStoredSettings();
+  await loadStoredSettings();
   createTray();
+  void reconcileASR("startup");
   startSidecarChild();
 
   const window = new BrowserWindow({
@@ -624,6 +674,8 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   asr.disconnect();
+  asrStarted = false;
+  activeASRSignature = null;
   if (process.platform !== "darwin") {
     app.quit();
   }

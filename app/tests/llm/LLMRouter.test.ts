@@ -98,4 +98,15 @@ describe("LLMRouter", () => {
     expect(oldPrimary.streamCalls).toBe(0);
     expect(newPrimary.streamCalls).toBe(1);
   });
+
+  it("reports an error instead of fabricating output when no client is configured", async () => {
+    const router = new LLMRouter({ primary: null, fallback: null }, { timeoutMs: 100 });
+    const events: string[] = [];
+    router.on("client-error", () => events.push("error"));
+    router.on("done", () => events.push("done"));
+
+    await router.route({ system: "s", user: "u" });
+
+    expect(events).toEqual(["error", "done"]);
+  });
 });

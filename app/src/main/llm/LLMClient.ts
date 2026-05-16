@@ -9,3 +9,8 @@ export interface LLMClient extends EventEmitter {
   stream(prompt: { system: string; user: string }, options: { timeoutMs: number }): Promise<void>;
   abort(): void;
 }
+
+export interface LLMClientSet {
+  primary: LLMClient | null;
+  fallback: LLMClient | null;
+}

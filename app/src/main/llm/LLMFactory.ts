@@ -4,14 +4,10 @@ import { hasClaudeOAuthCredentials } from "./ClaudeOAuth";
 import { ClaudeSubscriptionClient } from "./ClaudeSubscriptionClient";
 import { hasCodexCliAuth } from "./CodexAuth";
 import { CodexSubscriptionClient } from "./CodexSubscriptionClient";
-import type { LLMClient } from "./LLMClient";
-import { MockLLMClient } from "./MockLLMClient";
+import type { LLMClient, LLMClientSet } from "./LLMClient";
 import { OpenAIClient } from "./OpenAIClient";
 
-export function createLLMClients(settings: Pick<Settings, "anthropicKey" | "llmProvider" | "openaiKey">): {
-  primary: LLMClient;
-  fallback: LLMClient;
-} {
+export function createLLMClients(settings: Pick<Settings, "anthropicKey" | "llmProvider" | "openaiKey">): LLMClientSet {
   const provider = settings.llmProvider;
   const anthropicApi = createAnthropicApiClient(settings);
   const openaiApi = createOpenAIApiClient(settings);
@@ -22,20 +18,20 @@ export function createLLMClients(settings: Pick<Settings, "anthropicKey" | "llmP
     });
 
   if (provider === "api") {
-    return apiClientsOrMock(anthropicApi, openaiApi);
+    return apiClients(anthropicApi, openaiApi);
   }
 
   if (provider === "codex-subscription") {
     return {
-      primary: codexSubscription(),
-      fallback: firstClient(anthropicApi, openaiApi, hasClaudeOAuthCredentials() ? claudeSubscription() : null) ?? new MockLLMClient(),
+      primary: hasCodexCliAuth() ? codexSubscription() : null,
+      fallback: firstClient(anthropicApi, openaiApi, hasClaudeOAuthCredentials() ? claudeSubscription() : null),
     };
   }
 
   if (provider === "claude-subscription") {
     return {
-      primary: claudeSubscription(),
-      fallback: firstClient(hasCodexCliAuth() ? codexSubscription() : null, anthropicApi, openaiApi) ?? new MockLLMClient(),
+      primary: hasClaudeOAuthCredentials() ? claudeSubscription() : null,
+      fallback: firstClient(hasCodexCliAuth() ? codexSubscription() : null, anthropicApi, openaiApi),
     };
   }
 
@@ -61,59 +57,59 @@ function autoClients(opts: {
   claudeSubscription: () => LLMClient;
   codexSubscription: () => LLMClient;
   openaiApi: LLMClient | null;
-}): { primary: LLMClient; fallback: LLMClient } {
+}): LLMClientSet {
   if (opts.anthropicApi) {
     return {
       primary: opts.anthropicApi,
-      fallback: opts.openaiApi ?? new MockLLMClient("备用答案：请补充 OpenAI API key。"),
+      fallback: opts.openaiApi,
     };
   }
 
   if (opts.openaiApi) {
     return {
       primary: opts.openaiApi,
-      fallback: hasCodexCliAuth() ? opts.codexSubscription() : new MockLLMClient("备用答案：请补充 Anthropic API key。"),
+      fallback: hasCodexCliAuth() ? opts.codexSubscription() : null,
     };
   }
 
   if (hasCodexCliAuth()) {
     return {
       primary: opts.codexSubscription(),
-      fallback: hasClaudeOAuthCredentials() ? opts.claudeSubscription() : new MockLLMClient("备用答案：请登录 Claude Code。"),
+      fallback: hasClaudeOAuthCredentials() ? opts.claudeSubscription() : null,
     };
   }
 
   if (hasClaudeOAuthCredentials()) {
     return {
       primary: opts.claudeSubscription(),
-      fallback: new MockLLMClient("备用答案：请登录 Codex 或配置 API key。"),
+      fallback: null,
     };
   }
 
   return {
-    primary: new MockLLMClient(),
-    fallback: new MockLLMClient("备用答案：请先补充 API key，或登录本机 Codex/Claude。"),
+    primary: null,
+    fallback: null,
   };
 }
 
-function apiClientsOrMock(anthropicApi: LLMClient | null, openaiApi: LLMClient | null): { primary: LLMClient; fallback: LLMClient } {
+function apiClients(anthropicApi: LLMClient | null, openaiApi: LLMClient | null): LLMClientSet {
   if (anthropicApi) {
     return {
       primary: anthropicApi,
-      fallback: openaiApi ?? new MockLLMClient("备用答案：请补充 OpenAI API key。"),
+      fallback: openaiApi,
     };
   }
 
   if (openaiApi) {
     return {
       primary: openaiApi,
-      fallback: new MockLLMClient("备用答案：请补充 Anthropic API key。"),
+      fallback: null,
     };
   }
 
   return {
-    primary: new MockLLMClient(),
-    fallback: new MockLLMClient("备用答案：请先补充 API key。"),
+    primary: null,
+    fallback: null,
   };
 }
 
