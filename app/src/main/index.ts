@@ -9,6 +9,7 @@ import { AutoReconnectASR } from "./asr/AutoReconnectASR";
 import { AudioBuffer } from "./audio/AudioBuffer";
 import { createASRClient, type ASRConfig } from "./asr/ASRFactory";
 import { TranscriptStore } from "./asr/TranscriptStore";
+import { LLMQuestionClassifier } from "./classifier/LLMQuestionClassifier";
 import { QuestionClassifier } from "./classifier/QuestionClassifier";
 import { ContextManager } from "./context/ContextManager";
 import { IpcClient } from "./ipc/IpcClient";
@@ -113,9 +114,8 @@ function fireAnswer() {
 
   answerInFlight = true;
   const context = contextManager.buildContext();
-  const questionType = classifier.classify({ transcript: context.transcript, ocr: context.ocr });
-  triggerer
-    .fire(questionType)
+  classifyQuestion(context)
+    .then((questionType) => triggerer.fire(questionType))
     .catch((error) => console.error("[trigger]", error))
     .finally(() => {
       answerInFlight = false;
@@ -182,6 +182,30 @@ function applySettingsToRuntime(settings: Settings) {
   contextManager.updateResume(settings.resume);
   contextManager.updateJD(settings.jd);
   llmRouter.updateClients(createLLMClients(settings));
+}
+
+async function classifyQuestion(context: { transcript: string; ocr: string }) {
+  const signal = classifier.classifyWithSignal(context);
+  if (signal.confidence >= 0.7 || !hasLLMClassifierFallback()) {
+    return signal.type;
+  }
+
+  try {
+    const client = createLLMClients(settingsCache).primary;
+    return await new LLMQuestionClassifier(client, { timeoutMs: 1500 }).classify(context, signal.type);
+  } catch (error) {
+    logEvent({ level: "warn", module: "classifier", type: "llm-fallback-failed", meta: errorMeta(error) });
+    return signal.type;
+  }
+}
+
+function hasLLMClassifierFallback(): boolean {
+  return Boolean(
+    settingsCache.anthropicKey ||
+      settingsCache.openaiKey ||
+      process.env.ANTHROPIC_API_KEY ||
+      process.env.OPENAI_API_KEY,
+  );
 }
 
 function getSecretStore() {

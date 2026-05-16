@@ -25,4 +25,11 @@ describe("QuestionClassifier", () => {
   it("defaults to general when ambiguous", () => {
     expect(classifier.classify({ transcript: "嗯对", ocr: "" })).toBe("general");
   });
+
+  it("exposes low confidence for ambiguous general questions", () => {
+    expect(classifier.classifyWithSignal({ transcript: "看下这个", ocr: "" })).toEqual({
+      confidence: 0.4,
+      type: "general",
+    });
+  });
 });

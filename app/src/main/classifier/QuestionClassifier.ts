@@ -44,16 +44,20 @@ const CODE_PATTERN = /\b(function|class|def|return|var|let|const|public|private)
 
 export class QuestionClassifier {
   classify(input: { transcript: string; ocr: string }): QuestionType {
+    return this.classifyWithSignal(input).type;
+  }
+
+  classifyWithSignal(input: { transcript: string; ocr: string }): { confidence: number; type: QuestionType } {
     const haystack = `${input.transcript} ${input.ocr}`.toLowerCase();
     if (CODE_PATTERN.test(input.ocr)) {
-      return "technical";
+      return { confidence: 0.95, type: "technical" };
     }
     if (TECH_KEYWORDS.some((keyword) => haystack.includes(keyword.toLowerCase()))) {
-      return "technical";
+      return { confidence: 0.85, type: "technical" };
     }
     if (BEHAVIORAL_KEYWORDS.some((keyword) => haystack.includes(keyword))) {
-      return "behavioral";
+      return { confidence: 0.85, type: "behavioral" };
     }
-    return "general";
+    return { confidence: 0.4, type: "general" };
   }
 }
