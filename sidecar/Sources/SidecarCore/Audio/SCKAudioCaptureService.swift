@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -11,6 +12,10 @@ public final class SCKAudioCaptureService: NSObject, AudioCaptureService, SCStre
     private let sampleQueue = DispatchQueue(label: "ai-interview.sck-audio")
 
     public func start() throws {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw SCKAudioCaptureError.permissionDenied
+        }
+
         Task { [weak self] in
             guard let self else {
                 return
@@ -80,5 +85,6 @@ public final class SCKAudioCaptureService: NSObject, AudioCaptureService, SCStre
 }
 
 public enum SCKAudioCaptureError: Error {
+    case permissionDenied
     case noDisplay
 }

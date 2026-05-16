@@ -132,7 +132,10 @@ private final class CaptureBridge {
 
     init(server: IpcServer) {
         self.server = server
-        self.captureService = MockAudioCaptureService(chunkIntervalMs: 100)
+        self.captureService = AudioCaptureFactory.make(
+            environment: ProcessInfo.processInfo.environment,
+            chunkIntervalMs: 100
+        )
         self.captureService.onChunk = { [weak self] pcm, ts in
             self?.emitAudioChunk(pcm: pcm, ts: ts)
         }

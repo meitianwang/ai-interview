@@ -7,7 +7,13 @@ final class SCKAudioCaptureSmokeTests: XCTestCase {
         let service = SCKAudioCaptureService()
 
         XCTAssertNotNil(service)
-        XCTAssertNoThrow(try service.start())
+        do {
+            try service.start()
+        } catch SCKAudioCaptureError.permissionDenied {
+            return
+        } catch {
+            XCTFail("unexpected SCK start error: \(error)")
+        }
         service.stop()
     }
 }
