@@ -8,9 +8,12 @@ const SECRET_KEYS = ["anthropicKey", "openaiKey", "huoshanToken"] as const;
 type SecretKey = (typeof SECRET_KEYS)[number];
 type NonSecretKey = Exclude<keyof Settings, SecretKey>;
 
+export type LLMProvider = "api" | "auto" | "claude-subscription" | "codex-subscription";
+
 export interface Settings {
   resume: string;
   jd: string;
+  llmProvider: LLMProvider;
   anthropicKey: string;
   openaiKey: string;
   huoshanAppId: string;
@@ -20,6 +23,7 @@ export interface Settings {
 const DEFAULT_SETTINGS: Settings = {
   resume: "",
   jd: "",
+  llmProvider: "auto",
   anthropicKey: "",
   openaiKey: "",
   huoshanAppId: "",
@@ -72,6 +76,7 @@ export class SecretStore {
       return {
         resume: readString(parsed, "resume"),
         jd: readString(parsed, "jd"),
+        llmProvider: readLLMProvider(parsed, "llmProvider"),
         huoshanAppId: readString(parsed, "huoshanAppId"),
       };
     } catch (error) {
@@ -89,6 +94,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
   return {
     resume: settings.resume ?? "",
     jd: settings.jd ?? "",
+    llmProvider: readLLMProvider(settings, "llmProvider"),
     anthropicKey: settings.anthropicKey ?? "",
     openaiKey: settings.openaiKey ?? "",
     huoshanAppId: settings.huoshanAppId ?? "",
@@ -100,6 +106,7 @@ function toNonSecret(settings: Settings): Pick<Settings, NonSecretKey> {
   return {
     resume: settings.resume,
     jd: settings.jd,
+    llmProvider: settings.llmProvider,
     huoshanAppId: settings.huoshanAppId,
   };
 }
@@ -107,6 +114,11 @@ function toNonSecret(settings: Settings): Pick<Settings, NonSecretKey> {
 function readString(record: Record<string, unknown>, key: NonSecretKey): string {
   const value = record[key];
   return typeof value === "string" ? value : "";
+}
+
+function readLLMProvider(record: Record<string, unknown>, key: "llmProvider"): LLMProvider {
+  const value = record[key];
+  return value === "api" || value === "claude-subscription" || value === "codex-subscription" || value === "auto" ? value : "auto";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

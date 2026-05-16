@@ -13,11 +13,8 @@ import { LLMQuestionClassifier } from "./classifier/LLMQuestionClassifier";
 import { QuestionClassifier } from "./classifier/QuestionClassifier";
 import { ContextManager } from "./context/ContextManager";
 import { IpcClient } from "./ipc/IpcClient";
-import { ClaudeClient } from "./llm/ClaudeClient";
-import type { LLMClient } from "./llm/LLMClient";
+import { createClassifierLLMClient, createLLMClients } from "./llm/LLMFactory";
 import { LLMRouter } from "./llm/LLMRouter";
-import { MockLLMClient } from "./llm/MockLLMClient";
-import { OpenAIClient } from "./llm/OpenAIClient";
 import { Logger } from "./log/Logger";
 import { PromptBuilder } from "./prompt/PromptBuilder";
 import { PromptCache } from "./prompt/PromptCache";
@@ -49,6 +46,7 @@ const appStatus = new StatusStateMachine();
 const defaultSettings: Settings = {
   resume: "",
   jd: "",
+  llmProvider: "auto",
   anthropicKey: "",
   openaiKey: "",
   huoshanAppId: "",
@@ -170,10 +168,15 @@ function sanitizeSettings(payload: unknown): Settings {
     const value = source[key];
     return typeof value === "string" ? value : settingsCache[key];
   };
+  const readProvider = (key: keyof Settings): Settings["llmProvider"] => {
+    const value = source[key] ?? settingsCache[key];
+    return value === "api" || value === "claude-subscription" || value === "codex-subscription" || value === "auto" ? value : "auto";
+  };
 
   return {
     resume: readString("resume"),
     jd: readString("jd"),
+    llmProvider: readProvider("llmProvider"),
     anthropicKey: readString("anthropicKey"),
     openaiKey: readString("openaiKey"),
     huoshanAppId: readString("huoshanAppId"),
@@ -190,26 +193,17 @@ function applySettingsToRuntime(settings: Settings) {
 
 async function classifyQuestion(context: { transcript: string; ocr: string }) {
   const signal = classifier.classifyWithSignal(context);
-  if (signal.confidence >= 0.7 || !hasLLMClassifierFallback()) {
+  const fallbackClient = createClassifierLLMClient(settingsCache);
+  if (signal.confidence >= 0.7 || !fallbackClient) {
     return signal.type;
   }
 
   try {
-    const client = createLLMClients(settingsCache).primary;
-    return await new LLMQuestionClassifier(client, { timeoutMs: 1500 }).classify(context, signal.type);
+    return await new LLMQuestionClassifier(fallbackClient, { timeoutMs: 1500 }).classify(context, signal.type);
   } catch (error) {
     logEvent({ level: "warn", module: "classifier", type: "llm-fallback-failed", meta: errorMeta(error) });
     return signal.type;
   }
-}
-
-function hasLLMClassifierFallback(): boolean {
-  return Boolean(
-    settingsCache.anthropicKey ||
-      settingsCache.openaiKey ||
-      process.env.ANTHROPIC_API_KEY ||
-      process.env.OPENAI_API_KEY,
-  );
 }
 
 function getSecretStore() {
@@ -265,6 +259,7 @@ function settingsMeta(settings: Settings): Record<string, unknown> {
   return {
     anthropicConfigured: settings.anthropicKey.length > 0,
     huoshanAsrConfigured: settings.huoshanAppId.length > 0 && settings.huoshanToken.length > 0,
+    llmProvider: settings.llmProvider,
     openaiConfigured: settings.openaiKey.length > 0,
     profileConfigured: settings.resume.length > 0,
     targetRoleConfigured: settings.jd.length > 0,
@@ -648,42 +643,3 @@ app.on("will-quit", () => {
   void logger?.close().catch((error) => console.error("[logger]", error));
   logger = null;
 });
-
-function createLLMClients(settings: Pick<Settings, "anthropicKey" | "openaiKey">): {
-  primary: LLMClient;
-  fallback: LLMClient;
-} {
-  const anthropicKey = settings.anthropicKey || process.env.ANTHROPIC_API_KEY;
-  const openaiKey = settings.openaiKey || process.env.OPENAI_API_KEY;
-  const openaiClient = openaiKey
-    ? new OpenAIClient({
-        apiKey: openaiKey,
-        model: process.env.OPENAI_MODEL ?? "gpt-5.4",
-      })
-    : null;
-  const claudeClient = anthropicKey
-    ? new ClaudeClient({
-        apiKey: anthropicKey,
-        model: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
-      })
-    : null;
-
-  if (claudeClient) {
-    return {
-      primary: claudeClient,
-      fallback: openaiClient ?? new MockLLMClient("备用答案：请补充 OpenAI API key。"),
-    };
-  }
-
-  if (openaiClient) {
-    return {
-      primary: openaiClient,
-      fallback: new MockLLMClient("备用答案：请补充 Anthropic API key。"),
-    };
-  }
-
-  return {
-    primary: new MockLLMClient(),
-    fallback: new MockLLMClient("备用答案：请先补充 API key。"),
-  };
-}

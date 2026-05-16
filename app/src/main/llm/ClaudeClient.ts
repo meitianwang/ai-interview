@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { LLMClient } from "./LLMClient";
+import { readSSE } from "./SSE";
 
 export class ClaudeClient extends EventEmitter implements LLMClient {
   name = "claude";
@@ -54,34 +55,5 @@ export class ClaudeClient extends EventEmitter implements LLMClient {
 
   abort(): void {
     this.aborter?.abort();
-  }
-}
-
-async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (event: any) => void): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    let separatorIndex = buffer.indexOf("\n\n");
-    while (separatorIndex !== -1) {
-      const chunk = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-      if (dataLine) {
-        try {
-          onEvent(JSON.parse(dataLine.slice(6)));
-        } catch {
-          // Ignore provider heartbeat or malformed event payloads.
-        }
-      }
-      separatorIndex = buffer.indexOf("\n\n");
-    }
   }
 }

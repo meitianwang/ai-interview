@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { Settings } from "../api";
 
 function App() {
   const [resume, setResume] = useState("");
   const [jd, setJd] = useState("");
+  const [llmProvider, setLlmProvider] = useState<Settings["llmProvider"]>("auto");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [huoshanAppId, setHuoshanAppId] = useState("");
@@ -16,6 +18,7 @@ function App() {
       .then((settings) => {
         setResume(settings.resume ?? "");
         setJd(settings.jd ?? "");
+        setLlmProvider(settings.llmProvider ?? "auto");
         setAnthropicKey(settings.anthropicKey ?? "");
         setOpenaiKey(settings.openaiKey ?? "");
         setHuoshanAppId(settings.huoshanAppId ?? "");
@@ -30,7 +33,7 @@ function App() {
 
   async function save() {
     try {
-      await window.api?.saveSettings?.({ resume, jd, anthropicKey, openaiKey, huoshanAppId, huoshanToken });
+      await window.api?.saveSettings?.({ resume, jd, llmProvider, anthropicKey, openaiKey, huoshanAppId, huoshanToken });
       setStatus("已保存");
     } catch (error) {
       console.error("[settings]", error);
@@ -55,6 +58,14 @@ function App() {
       </section>
 
       <section style={sectionStyle}>
+        <Field label="模型来源">
+          <select value={llmProvider} onChange={(event) => setLlmProvider(event.target.value as Settings["llmProvider"])} style={inputStyle}>
+            <option value="auto">自动：API Key → Codex 订阅 → Claude 订阅</option>
+            <option value="codex-subscription">本机 Codex 订阅</option>
+            <option value="claude-subscription">本机 Claude 订阅</option>
+            <option value="api">仅 API Key</option>
+          </select>
+        </Field>
         <Field label="Anthropic API Key">
           <input type="password" value={anthropicKey} onChange={(event) => setAnthropicKey(event.target.value)} style={inputStyle} />
         </Field>

@@ -33,12 +33,13 @@ describe("SecretStore", () => {
       jd: "J",
       anthropicKey: "K1",
       openaiKey: "K2",
+      llmProvider: "codex-subscription",
       huoshanAppId: "A",
       huoshanToken: "T",
     });
 
     const rawConfig = await readFile(join(tempDir, "settings.json"), "utf8");
-    expect(JSON.parse(rawConfig)).toEqual({ resume: "R", jd: "J", huoshanAppId: "A" });
+    expect(JSON.parse(rawConfig)).toEqual({ resume: "R", jd: "J", llmProvider: "codex-subscription", huoshanAppId: "A" });
     expect(rawConfig).not.toContain("K1");
     expect(rawConfig).not.toContain("K2");
     expect(rawConfig).not.toContain("T");
@@ -50,6 +51,7 @@ describe("SecretStore", () => {
     expect(loaded).toEqual({
       resume: "R",
       jd: "J",
+      llmProvider: "codex-subscription",
       anthropicKey: "stored-anthropicKey",
       openaiKey: "stored-openaiKey",
       huoshanAppId: "A",
