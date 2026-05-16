@@ -13,6 +13,7 @@ final class IpcServerTests: XCTestCase {
 
         let line = try await connectAndReadOneLine(path: path)
         XCTAssertTrue(line.contains("\"t\":\"ready\""))
+        XCTAssertTrue(line.contains("\"\(IpcProtocol.version)\""))
         try await waitForOwnerOnlySocketMode(path: path)
     }
 

@@ -81,7 +81,7 @@ public final class IpcServer {
         let event = SidecarEvent.ready(
             seq: nextReadySeq(),
             ts: Int64(Date().timeIntervalSince1970 * 1000),
-            version: SidecarCore.version
+            version: IpcProtocol.version
         )
         if let data = try? IpcCodec.encode(event) {
             connection.send(content: data, completion: .contentProcessed { _ in })
